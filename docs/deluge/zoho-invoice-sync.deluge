@@ -1,0 +1,57 @@
+// =============================================================================
+// Zoho Books → Siigo Nube
+// Botón personalizado en facturas para invocar el integration-hub.
+//
+// Crea el botón en Zoho Books: Settings > Customization > Custom Buttons,
+// asigna este script y pásale los parámetros del registro de la factura.
+// =============================================================================
+
+// 1. Datos básicos del registro
+organizationID = organization.get("organization_id");
+invoiceID = invoice.get("invoice_id");
+
+// 2. Configuración de la integración
+//    En producción, guarda estas constantes en una "Function Variable"
+//    (Setup > Developer Data > Function Variables) en lugar de hardcodearlas.
+endpointURL = "https://tu-dominio.com/api/zoho/invoice/sync";
+integrationKey = "REEMPLAZAR_CON_INTEGRATION_API_KEY";
+
+// 3. Headers
+headers = Map();
+headers.put("Content-Type", "application/json");
+headers.put("X-INTEGRATION-KEY", integrationKey);
+
+// 4. Payload
+payload = Map();
+payload.put("organization_id", organizationID);
+payload.put("invoice_id", invoiceID);
+
+// 5. Llamada HTTP
+try
+{
+    response = invokeurl
+    [
+        url: endpointURL
+        type: POST
+        parameters: payload.toString()
+        headers: headers
+    ];
+
+    // 6. Manejo de respuesta
+    if (response.get("success") == true)
+    {
+        siigoID = response.get("siigo_invoice_id");
+        siigoLink = response.get("siigo_invoice_link");
+        info "Factura sincronizada en Siigo. ID: " + siigoID + " | Link: " + siigoLink;
+    }
+    else
+    {
+        msg = ifnull(response.get("message"), "Error desconocido sincronizando con Siigo.");
+        details = ifnull(response.get("details"), Map());
+        info "No se pudo sincronizar: " + msg + " | Detalles: " + details.toString();
+    }
+}
+catch (e)
+{
+    info "Excepción al llamar al integration-hub: " + e.toString();
+}

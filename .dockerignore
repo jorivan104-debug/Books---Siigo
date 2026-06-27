@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.local
+.env.testing
+node_modules
+vendor
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+tests
+docs
+README.md
+*.md

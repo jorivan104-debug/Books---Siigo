@@ -54,10 +54,14 @@ Si el header `X-INTEGRATION-KEY` falta o no coincide, la API responde `401`.
 ## Configuración
 
 1. Copia `.env.example` a `.env` y completa las credenciales de Zoho, Siigo y la base de datos.
-2. Variables clave:
+2. **Panel web de autenticación:** abre `https://tu-dominio/setup` e inicia sesión con `INTEGRATION_API_KEY`. Desde ahí puedes:
+   - Intercambiar Grant Token de Zoho Self Client → `ZOHO_REFRESH_TOKEN`
+   - Probar conexión Zoho Books
+   - Autenticar Siigo y listar IDs de catálogos (`DOCUMENT_ID`, `SELLER_ID`, etc.)
+3. Variables clave:
 
    - `INTEGRATION_API_KEY`: clave que Zoho debe enviar en el header.
-   - `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`: OAuth de la app de Zoho.
+   - `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`: OAuth **Self Client** de Zoho (ver [`docs/zoho-self-client.md`](docs/zoho-self-client.md))
    - `SIIGO_USERNAME`, `SIIGO_ACCESS_KEY`, `SIIGO_PARTNER_ID`: credenciales API de Siigo (Alianzas > Mi Credencial API).
    - `SIIGO_DOCUMENT_ID`, `SIIGO_SELLER_ID`, `SIIGO_PAYMENT_ID`, `SIIGO_TAX_ID_IVA_19`: IDs numéricos de catálogos Siigo.
    - `SIIGO_DEFAULT_COUNTRY_CODE` / `STATE_CODE` / `CITY_CODE`: defaults geográficos para crear clientes inline (Bogotá por defecto).
@@ -67,6 +71,19 @@ Si el header `X-INTEGRATION-KEY` falta o no coincide, la API responde `401`.
    php artisan key:generate
    php artisan migrate
    ```
+
+### Credenciales Zoho (Self Client)
+
+Por defecto el proyecto usa `ZOHO_CLIENT_TYPE=self`. Para obtener el `refresh_token`:
+
+```bash
+# 1. Genera un Grant Token en api-console.zoho.com → Self Client → Generate Code
+# 2. Configura ZOHO_CLIENT_ID y ZOHO_CLIENT_SECRET en .env
+php artisan zoho:exchange-grant-token TU_GRANT_TOKEN --show-env
+php artisan zoho:test-connection
+```
+
+Guía completa: [`docs/zoho-self-client.md`](docs/zoho-self-client.md)
 
 ## Desarrollo local
 
@@ -110,6 +127,7 @@ app/
     Requests/SyncZohoInvoiceRequest.php
   Services/
     ZohoBooksService.php
+    ZohoOAuthService.php
     SiigoAuthService.php
     SiigoCustomerService.php
     SiigoInvoiceService.php

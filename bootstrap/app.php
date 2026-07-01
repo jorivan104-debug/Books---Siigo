@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'integration.key' => ValidateIntegrationKey::class,
+            'setup.auth' => \App\Http\Middleware\SetupAuthenticated::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

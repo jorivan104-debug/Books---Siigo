@@ -22,7 +22,7 @@ return [
     |
     */
 
-    'partner_id' => env('SIIGO_PARTNER_ID', 'integration-hub'),
+    'partner_id' => env('SIIGO_PARTNER_ID', 'integrationHub'),
 
     /*
     |--------------------------------------------------------------------------

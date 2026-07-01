@@ -10,55 +10,13 @@ use Throwable;
 
 class ZohoBooksService
 {
-    private const ACCESS_TOKEN_CACHE_KEY = 'zoho:access_token';
+    public function __construct(private readonly ZohoOAuthService $oauth)
+    {
+    }
 
     public function getAccessToken(): string
     {
-        $cached = Cache::get(self::ACCESS_TOKEN_CACHE_KEY);
-        if (is_string($cached) && $cached !== '') {
-            return $cached;
-        }
-
-        $accountsUrl = (string) config('zoho.accounts_url');
-        $clientId = (string) config('zoho.client_id');
-        $clientSecret = (string) config('zoho.client_secret');
-        $refreshToken = (string) config('zoho.refresh_token');
-
-        if ($clientId === '' || $clientSecret === '' || $refreshToken === '') {
-            throw new ExternalApiException(
-                'Credenciales de Zoho no configuradas (ZOHO_CLIENT_ID / SECRET / REFRESH_TOKEN).',
-                'zoho',
-            );
-        }
-
-        $response = $this->safeRequest(
-            fn () => Http::asForm()
-                ->timeout((int) config('zoho.timeout', 20))
-                ->post($accountsUrl.'/oauth/v2/token', [
-                    'refresh_token' => $refreshToken,
-                    'client_id' => $clientId,
-                    'client_secret' => $clientSecret,
-                    'grant_type' => 'refresh_token',
-                ]),
-            'No se pudo refrescar el access_token de Zoho.',
-        );
-
-        $body = $response->json() ?? [];
-        $token = $body['access_token'] ?? null;
-
-        if (! is_string($token) || $token === '') {
-            throw new ExternalApiException(
-                'Zoho no devolvió access_token al refrescar.',
-                'zoho',
-                $response->status(),
-                $body,
-            );
-        }
-
-        $expiresIn = (int) ($body['expires_in'] ?? 3600);
-        Cache::put(self::ACCESS_TOKEN_CACHE_KEY, $token, max(60, $expiresIn - 120));
-
-        return $token;
+        return $this->oauth->getAccessToken();
     }
 
     public function getInvoice(string $organizationId, string $invoiceId): array

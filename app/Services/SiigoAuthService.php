@@ -13,13 +13,37 @@ class SiigoAuthService
 
     public function getToken(): string
     {
+        $this->assertPartnerIdIsValid();
+
         $cached = Cache::get(self::ACCESS_TOKEN_CACHE_KEY);
         if (is_string($cached) && $cached !== '') {
             return $cached;
         }
 
-        $username = (string) config('siigo.username');
-        $accessKey = (string) config('siigo.access_key');
+        return $this->requestNewToken();
+    }
+
+    public function partnerId(): string
+    {
+        $partnerId = trim((string) config('siigo.partner_id', 'integrationHub'));
+
+        return $partnerId !== '' ? $partnerId : 'integrationHub';
+    }
+
+    public function clearAccessTokenCache(): void
+    {
+        Cache::forget(self::ACCESS_TOKEN_CACHE_KEY);
+    }
+
+    /**
+     * Fuerza una nueva autenticación (útil para diagnóstico).
+     */
+    public function requestNewToken(): string
+    {
+        $this->assertPartnerIdIsValid();
+
+        $username = trim((string) config('siigo.username'));
+        $accessKey = trim((string) config('siigo.access_key'));
 
         if ($username === '' || $accessKey === '') {
             throw new ExternalApiException(
@@ -29,9 +53,10 @@ class SiigoAuthService
         }
 
         try {
+            // POST /auth NO lleva Authorization Bearer; solo Partner-Id + credenciales.
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-                'Partner-Id' => (string) config('siigo.partner_id', 'integration-hub'),
+                'Partner-Id' => $this->partnerId(),
             ])
                 ->timeout((int) config('siigo.timeout', 30))
                 ->post(rtrim((string) config('siigo.api_base_url'), '/').'/auth', [
@@ -50,7 +75,7 @@ class SiigoAuthService
 
         if ($response->failed()) {
             throw new ExternalApiException(
-                'No se pudo autenticar en Siigo.',
+                $this->authErrorMessage($response),
                 'siigo',
                 $response->status(),
                 is_array($response->json()) ? $response->json() : ['raw' => $response->body()],
@@ -73,5 +98,34 @@ class SiigoAuthService
         Cache::put(self::ACCESS_TOKEN_CACHE_KEY, $token, max(60, $expiresIn - 120));
 
         return $token;
+    }
+
+    public function assertPartnerIdIsValid(): void
+    {
+        $partnerId = $this->partnerId();
+
+        if (preg_match('/^[a-zA-Z0-9]{3,100}$/', $partnerId) !== 1) {
+            throw new ExternalApiException(
+                "SIIGO_PARTNER_ID inválido: \"{$partnerId}\". Debe ser alfanumérico (3-100 chars), sin guiones ni espacios. Ejemplo: integrationHub. Debe coincidir con el registrado en Siigo Nube → Alianzas → Mi Credencial API.",
+                'siigo',
+            );
+        }
+    }
+
+    /**
+     * @param  \Illuminate\Http\Client\Response  $response
+     */
+    private function authErrorMessage($response): string
+    {
+        $body = $response->json() ?? [];
+        $errors = $body['Errors'] ?? [];
+        $first = is_array($errors) && isset($errors[0]) ? $errors[0] : [];
+        $code = $first['Code'] ?? null;
+
+        return match ($code) {
+            'invalid_partner_id' => 'Partner-Id inválido. Usa el valor registrado en Siigo (solo letras/números, sin guiones). Ej: integrationHub',
+            'unauthorized' => 'Credenciales Siigo rechazadas. Verifica SIIGO_USERNAME y SIIGO_ACCESS_KEY en Siigo Nube → Alianzas → Mi Credencial API.',
+            default => 'No se pudo autenticar en Siigo.',
+        };
     }
 }

@@ -4,12 +4,11 @@ namespace App\Services;
 
 use App\Exceptions\ExternalApiException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Http;
 use Throwable;
 
 class SiigoCustomerService
 {
-    public function __construct(private readonly SiigoAuthService $auth)
+    public function __construct(private readonly SiigoHttpClient $http)
     {
     }
 
@@ -20,10 +19,7 @@ class SiigoCustomerService
     public function findByIdentification(string $identification): ?array
     {
         $response = $this->safeRequest(
-            fn () => $this->client()->get(
-                rtrim((string) config('siigo.api_base_url'), '/').'/v1/customers',
-                ['identification' => $identification],
-            ),
+            fn () => $this->http->get('v1/customers', ['identification' => $identification]),
             "No se pudo consultar el cliente {$identification} en Siigo.",
         );
 
@@ -165,15 +161,6 @@ class SiigoCustomerService
         $trimmed = trim($value);
 
         return $trimmed === '' ? null : $trimmed;
-    }
-
-    private function client(): \Illuminate\Http\Client\PendingRequest
-    {
-        return Http::withHeaders([
-            'Authorization' => 'Bearer '.$this->auth->getToken(),
-            'Partner-Id' => (string) config('siigo.partner_id', 'integration-hub'),
-            'Content-Type' => 'application/json',
-        ])->timeout((int) config('siigo.timeout', 30));
     }
 
     /**

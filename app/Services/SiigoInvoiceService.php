@@ -4,12 +4,11 @@ namespace App\Services;
 
 use App\DTOs\SiigoInvoicePayload;
 use App\Exceptions\ExternalApiException;
-use Illuminate\Support\Facades\Http;
 use Throwable;
 
 class SiigoInvoiceService
 {
-    public function __construct(private readonly SiigoAuthService $auth)
+    public function __construct(private readonly SiigoHttpClient $http)
     {
     }
 
@@ -78,16 +77,8 @@ class SiigoInvoiceService
 
     public function create(SiigoInvoicePayload $payload): array
     {
-        $url = rtrim((string) config('siigo.api_base_url'), '/').'/v1/invoices';
-
         try {
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer '.$this->auth->getToken(),
-                'Partner-Id' => (string) config('siigo.partner_id', 'integration-hub'),
-                'Content-Type' => 'application/json',
-            ])
-                ->timeout((int) config('siigo.timeout', 30))
-                ->post($url, $payload->toArray());
+            $response = $this->http->post('v1/invoices', $payload->toArray());
         } catch (Throwable $e) {
             throw new ExternalApiException(
                 'Error de red creando la factura en Siigo: '.$e->getMessage(),

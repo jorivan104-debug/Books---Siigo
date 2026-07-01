@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 
 # Imagen única (php-fpm + nginx) pensada para despliegue en Coolify.
-FROM php:8.3-fpm-alpine AS base
+FROM php:8.4-fpm-alpine AS base
 
 # Extensiones PHP necesarias
 RUN apk add --no-cache \

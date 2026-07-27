@@ -44,6 +44,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Producto genérico (todos los ítems de Zoho)
+    |--------------------------------------------------------------------------
+    |
+    | Si está definido, TODAS las líneas usan este código de producto en Siigo
+    | (ignora el SKU de Zoho). Útil cuando los SKU de Zoho no existen en Siigo.
+    | Ejemplo: código "41" = "Articulo 41 - PANTALON DAMA".
+    |
+    */
+
+    'default_product_code' => env('SIIGO_DEFAULT_PRODUCT_CODE'),
+    'default_product_description' => env('SIIGO_DEFAULT_PRODUCT_DESCRIPTION'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Defaults para creación de cliente desde la factura
     |--------------------------------------------------------------------------
     |

@@ -16,8 +16,8 @@ class SiigoInvoiceService
      * Construye el array de items para Siigo a partir de los line_items de Zoho.
      *
      * Mapeo:
-     *   sku             → code (con override opcional desde config/siigo_product_map.php)
-     *   name            → description
+     *   sku             → code (override por SIIGO_DEFAULT_PRODUCT_CODE o siigo_product_map)
+     *   name            → description (o SIIGO_DEFAULT_PRODUCT_DESCRIPTION)
      *   quantity        → quantity
      *   rate            → price
      *   discount_amount → discount
@@ -27,15 +27,25 @@ class SiigoInvoiceService
     {
         $productMap = (array) config('siigo_product_map', []);
         $taxIdIva19 = config('siigo.tax_id_iva_19');
+        $defaultCode = trim((string) config('siigo.default_product_code', ''));
+        $defaultDescription = trim((string) config('siigo.default_product_description', ''));
 
         $items = [];
         foreach ($lineItems as $line) {
             $sku = (string) ($line['sku'] ?? $line['item_id'] ?? '');
-            $code = $productMap[$sku] ?? $sku;
+            if ($defaultCode !== '') {
+                $code = $defaultCode;
+            } else {
+                $code = $productMap[$sku] ?? $sku;
+            }
+
+            $description = $defaultDescription !== ''
+                ? $defaultDescription
+                : (string) ($line['name'] ?? $line['description'] ?? $defaultCode);
 
             $item = [
                 'code' => $code,
-                'description' => (string) ($line['name'] ?? $line['description'] ?? ''),
+                'description' => $description !== '' ? $description : $code,
                 'quantity' => (float) ($line['quantity'] ?? 0),
                 'price' => (float) ($line['rate'] ?? 0),
             ];

@@ -1,10 +1,27 @@
 # syntax=docker/dockerfile:1.6
 
+# Dependencias PHP: stage separado con imagen Composer (Debian) para evitar
+# errores SSL (curl 60) al descargar zipballs desde api.github.com en Alpine.
+FROM composer:2 AS vendor
+
+WORKDIR /app
+
+COPY composer.json composer.lock ./
+
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --no-progress \
+    --no-scripts \
+    --prefer-dist \
+    --ignore-platform-reqs
+
 # Imagen única (php-fpm + nginx) pensada para despliegue en Coolify.
 FROM php:8.4-fpm-alpine AS base
 
 # Extensiones PHP necesarias
 RUN apk add --no-cache \
+        ca-certificates \
         nginx \
         bash \
         curl \
@@ -16,6 +33,7 @@ RUN apk add --no-cache \
         postgresql-dev \
         supervisor \
         zip \
+    && update-ca-certificates \
     && docker-php-ext-install -j$(nproc) \
         bcmath \
         intl \
@@ -25,16 +43,15 @@ RUN apk add --no-cache \
         pdo_mysql \
         pdo_pgsql \
         zip \
-    && apk del --no-network \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/cache/apk/* /tmp/*
 
-# Composer
+# Composer (solo para dump-autoload / scripts en build)
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-interaction --no-progress --no-scripts --prefer-dist
+COPY --from=vendor /app/vendor ./vendor
 
 COPY . .
 

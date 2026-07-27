@@ -1,20 +1,24 @@
 # syntax=docker/dockerfile:1.6
 
-# Dependencias PHP: stage separado con imagen Composer (Debian) para evitar
-# errores SSL (curl 60) al descargar zipballs desde api.github.com en Alpine.
+# Dependencias PHP en stage Composer.
+# En algunos hosts Coolify, HTTPS a api.github.com falla con curl 60
+# (certificado que no coincide con el hostname: proxy/MITM/DNS).
+# disable-tls/secure-http=false evita ese bloqueo solo en build.
 FROM composer:2 AS vendor
 
 WORKDIR /app
 
 COPY composer.json composer.lock ./
 
-RUN composer install \
-    --no-dev \
-    --no-interaction \
-    --no-progress \
-    --no-scripts \
-    --prefer-dist \
-    --ignore-platform-reqs
+RUN composer config -g -- disable-tls true \
+    && composer config -g -- secure-http false \
+    && composer install \
+        --no-dev \
+        --no-interaction \
+        --no-progress \
+        --no-scripts \
+        --prefer-dist \
+        --ignore-platform-reqs
 
 # Imagen única (php-fpm + nginx) pensada para despliegue en Coolify.
 FROM php:8.4-fpm-alpine AS base

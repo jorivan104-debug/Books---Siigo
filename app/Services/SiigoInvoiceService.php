@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\DTOs\SiigoInvoicePayload;
 use App\Exceptions\ExternalApiException;
+use InvalidArgumentException;
 use Throwable;
 
 class SiigoInvoiceService
@@ -27,13 +28,19 @@ class SiigoInvoiceService
     public function buildItemsFromZohoLineItems(array $lineItems): array
     {
         $productMap = (array) config('siigo_product_map', []);
-        $taxIdIva19 = config('siigo.tax_id_iva_19');
+        $taxIdIva19 = trim((string) config('siigo.tax_id_iva_19', ''));
         $defaultCode = trim((string) config('siigo.default_product_code', ''));
         $defaultDescription = trim((string) config('siigo.default_product_description', ''));
         $forceIva = (bool) config('siigo.force_iva_on_untaxed', true);
         $ivaRate = (float) config('siigo.iva_rate', 0.19);
         $decimals = max(0, (int) config('siigo.price_decimals', 2));
         $divisor = 1 + max(0.0, $ivaRate);
+
+        if ($forceIva && $taxIdIva19 === '') {
+            throw new InvalidArgumentException(
+                'SIIGO_TAX_ID_IVA_19 es obligatorio para gravar IVA 19% en líneas sin impuesto de Zoho. Configúralo en Coolify (ID del catálogo /v1/taxes).'
+            );
+        }
 
         $items = [];
         foreach ($lineItems as $line) {
@@ -49,49 +56,79 @@ class SiigoInvoiceService
                 : (string) ($line['name'] ?? $line['description'] ?? $defaultCode);
 
             $quantity = (float) ($line['quantity'] ?? 0);
-            $rate = (float) ($line['rate'] ?? 0);
+            $rateInclusiveOrExclusive = (float) ($line['rate'] ?? 0);
             $discount = (float) ($line['discount_amount'] ?? 0);
-            $taxPercentage = (float) ($line['tax_percentage'] ?? 0);
+            $taxPercentage = $this->resolveZohoTaxPercentage($line);
 
-            $applyForcedIva = $forceIva
-                && $taxPercentage <= 0
-                && $taxIdIva19 !== null
-                && $taxIdIva19 !== ''
-                && $divisor > 1;
-
-            if ($applyForcedIva) {
-                // Precio Zoho = total con IVA incluido → base imponible para Siigo.
-                $rate = round($rate / $divisor, $decimals);
-                if ($discount > 0) {
-                    $discount = round($discount / $divisor, $decimals);
-                }
-            }
+            $applyForcedIva = $forceIva && $taxPercentage <= 0 && $divisor > 1;
 
             $item = [
                 'code' => $code,
                 'description' => $description !== '' ? $description : $code,
                 'quantity' => $quantity,
-                'price' => $rate,
             ];
 
-            if ($discount > 0) {
-                $item['discount'] = $discount;
-            }
+            if ($applyForcedIva) {
+                // Zoho sin IVA: el rate es el total a pagar (con IVA implícito).
+                // Siigo acepta taxed_price (precio con IVA) + taxes[].
+                $taxedPrice = round($rateInclusiveOrExclusive, $decimals);
+                $exclusivePrice = round($rateInclusiveOrExclusive / $divisor, $decimals);
 
-            $shouldAttachIva = ($taxPercentage > 0 || $applyForcedIva)
-                && $taxIdIva19 !== null
-                && $taxIdIva19 !== '';
-
-            if ($shouldAttachIva) {
+                $item['price'] = $exclusivePrice;
+                $item['taxed_price'] = $taxedPrice;
                 $item['taxes'] = [
                     ['id' => (int) $taxIdIva19],
                 ];
+
+                if ($discount > 0) {
+                    $item['discount'] = round($discount / $divisor, $decimals);
+                }
+            } else {
+                $item['price'] = $rateInclusiveOrExclusive;
+
+                if ($discount > 0) {
+                    $item['discount'] = $discount;
+                }
+
+                if ($taxPercentage > 0 && $taxIdIva19 !== '') {
+                    $item['taxes'] = [
+                        ['id' => (int) $taxIdIva19],
+                    ];
+                }
             }
 
             $items[] = $item;
         }
 
         return $items;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function resolveZohoTaxPercentage(array $line): float
+    {
+        if (isset($line['tax_percentage']) && is_numeric($line['tax_percentage'])) {
+            return (float) $line['tax_percentage'];
+        }
+
+        $lineTaxes = $line['line_item_taxes'] ?? $line['taxes'] ?? null;
+        if (! is_array($lineTaxes) || $lineTaxes === []) {
+            return 0.0;
+        }
+
+        $max = 0.0;
+        foreach ($lineTaxes as $tax) {
+            if (! is_array($tax)) {
+                continue;
+            }
+            $pct = $tax['tax_percentage'] ?? $tax['percentage'] ?? null;
+            if (is_numeric($pct)) {
+                $max = max($max, (float) $pct);
+            }
+        }
+
+        return $max;
     }
 
     /**

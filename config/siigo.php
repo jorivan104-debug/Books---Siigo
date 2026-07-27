@@ -58,6 +58,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | IVA forzado para líneas Zoho sin impuesto
+    |--------------------------------------------------------------------------
+    |
+    | Si Zoho trae tax_percentage = 0, el rate se trata como precio CON IVA
+    | incluido: se descompone (÷ 1.19) y se envía a Siigo con IVA 19%.
+    | Ej: 78.000 → base 65.546,22 + IVA 12.453,78 = 78.000.
+    |
+    */
+
+    'force_iva_on_untaxed' => filter_var(env('SIIGO_FORCE_IVA_ON_UNTAXED', true), FILTER_VALIDATE_BOOLEAN),
+    'iva_rate' => (float) env('SIIGO_IVA_RATE', 0.19),
+    'price_decimals' => (int) env('SIIGO_PRICE_DECIMALS', 2),
+
+    /*
+    |--------------------------------------------------------------------------
     | Defaults para creación de cliente desde la factura
     |--------------------------------------------------------------------------
     |

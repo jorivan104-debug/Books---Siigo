@@ -18,6 +18,7 @@
 /public/storage
 /storage/*.key
 /storage/pail
+/storage/app/zoho_oauth.json
 Homestead.json
 Homestead.yaml
 Thumbs.db

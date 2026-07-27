@@ -175,10 +175,10 @@ class ZohoOAuthService
                 $lastResponse = $response;
                 $errors[] = $accountsUrl.' → HTTP '.$response->status();
             } catch (Throwable $e) {
-                $errors[] = $accountsUrl.' → '.$e->getMessage();
+                $errors[] = $accountsUrl.' → '.$this->redactSecrets($e->getMessage());
                 Log::warning('Zoho OAuth network error', [
                     'accounts_url' => $accountsUrl,
-                    'error' => $e->getMessage(),
+                    'error' => $this->redactSecrets($e->getMessage()),
                 ]);
             }
         }
@@ -223,7 +223,6 @@ class ZohoOAuthService
         // Fallback regional habitual en LATAM / multi-DC.
         foreach ([
             'https://accounts.zoho.com',
-            'https://accounts.zoho.com.co',
             'https://accounts.zoho.eu',
         ] as $url) {
             if (! in_array($url, $candidates, true)) {
@@ -283,14 +282,38 @@ class ZohoOAuthService
         $value = trim($value);
         $value = trim($value, "\"'");
 
+        // Coolify/usuarios a veces pegan "ZOHO_REFRESH_TOKEN=1000.xxx" completo.
+        if (preg_match('/^(?:ZOHO_[A-Z0-9_]+|CLIENT_ID|CLIENT_SECRET|REFRESH_TOKEN)\s*=\s*(.+)$/i', $value, $matches)) {
+            $value = trim($matches[1], " \t\"'");
+        }
+
+        // Doble prefijo residual.
+        $value = preg_replace('/^ZOHO_REFRESH_TOKEN=/i', '', $value) ?? $value;
+
         return preg_replace('/\s+/', '', $value) ?? $value;
+    }
+
+    private function redactSecrets(string $message): string
+    {
+        $patterns = [
+            '/refresh_token=[^&\s]+/i' => 'refresh_token=***',
+            '/client_secret=[^&\s]+/i' => 'client_secret=***',
+            '/client_id=[^&\s]+/i' => 'client_id=***',
+            '/(?<=[&?])code=[^&\s]+/i' => 'code=***',
+        ];
+
+        foreach ($patterns as $pattern => $replacement) {
+            $message = preg_replace($pattern, $replacement, $message) ?? $message;
+        }
+
+        return $message;
     }
 
     private function persistOAuthSecrets(string $refreshToken, ?string $apiDomain): void
     {
         $path = storage_path('app/'.self::REFRESH_TOKEN_STORAGE);
         $payload = [
-            'refresh_token' => $refreshToken,
+            'refresh_token' => $this->sanitizeSecret($refreshToken),
             'api_domain' => $apiDomain,
             'updated_at' => now()->toIso8601String(),
         ];
@@ -327,13 +350,13 @@ class ZohoOAuthService
         $suffix = $tried !== [] ? ' Intentos: '.implode('; ', $tried).'.' : '';
 
         if (str_starts_with(ltrim($raw), '<') || str_contains(strtolower((string) $response->header('Content-Type')), 'text/html')) {
-            return 'Zoho Accounts rechazó el OAuth (HTML). Pasos: 1) En /setup genera Grant Token nuevo e intercámbialo. 2) Copia ZOHO_REFRESH_TOKEN a Coolify o deja que el panel lo guarde en disco. 3) Verifica CLIENT_ID/SECRET del Self Client. URL configurada: '.$accountsUrl.'.'.$suffix;
+            return 'Zoho Accounts rechazó el OAuth (HTML/400). Suele ser refresh_token mal pegado (no incluyas ZOHO_REFRESH_TOKEN=) o CLIENT_ID/SECRET incorrectos. URL: '.$accountsUrl.'.'.$suffix;
         }
 
         return match ($error) {
             'invalid_code' => 'Grant/refresh token inválido o ya usado. Genera un Grant Token nuevo en Self Client → Generate Code.'.$suffix,
             'invalid_client', 'invalid_client_secret' => 'Client ID o Client Secret incorrectos, o datacenter distinto al del Self Client.'.$suffix,
-            'invalid_grant' => 'Refresh token inválido o revocado. Vuelve a intercambiar un Grant Token en /setup.'.$suffix,
+            'invalid_grant' => 'Refresh token inválido o revocado. En Coolify pega SOLO el valor 1000.xxx (sin ZOHO_REFRESH_TOKEN=) o vuelve a intercambiar en /setup.'.$suffix,
             default => 'Error OAuth de Zoho: '.(is_string($error) ? $error : 'HTTP '.$response->status()).'.'.$suffix,
         };
     }

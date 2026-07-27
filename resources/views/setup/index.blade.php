@@ -65,9 +65,10 @@
 
         @if (session('zoho_refresh_token'))
             <div class="alert alert-success" style="margin-top:1rem;">
-                Paso obligatorio: pega esto en Coolify → Environment Variables y reinicia:
+                En Coolify pega <strong>solo el valor</strong> (empieza por <code style="display:inline;padding:0.1rem 0.35rem;">1000.</code>),
+                sin escribir <code style="display:inline;padding:0.1rem 0.35rem;">ZOHO_REFRESH_TOKEN=</code> otra vez:
             </div>
-            <code class="mono env-line">ZOHO_REFRESH_TOKEN={{ session('zoho_refresh_token') }}</code>
+            <code class="mono env-line">{{ session('zoho_refresh_token') }}</code>
             @if (session('zoho_api_domain'))
                 <p style="margin-top:0.5rem;font-size:0.8125rem;color:var(--muted);">API domain: {{ session('zoho_api_domain') }}</p>
             @endif

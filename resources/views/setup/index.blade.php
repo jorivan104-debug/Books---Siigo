@@ -50,6 +50,8 @@
             <li>Ve a <a href="https://api-console.zoho.com" target="_blank" rel="noopener" style="color:#93c5fd">api-console.zoho.com</a> → Self Client → Generate Code</li>
             <li>Scopes: <code style="display:inline;padding:0.1rem 0.35rem;font-size:0.75rem;">{{ $zohoScopes }}</code></li>
             <li>Pega el Grant Token abajo (caduca en minutos)</li>
+            <li>Copia el <code style="display:inline;padding:0.1rem 0.35rem;">ZOHO_REFRESH_TOKEN</code> a Coolify y reinicia el servicio</li>
+            <li>Solo entonces usa «Probar conexión»</li>
         </ol>
 
         <form method="POST" action="{{ route('setup.zoho.exchange') }}">
@@ -62,7 +64,9 @@
         </form>
 
         @if (session('zoho_refresh_token'))
-            <p style="margin-top:1rem;font-size:0.875rem;color:var(--muted);">Copia a Coolify / .env:</p>
+            <div class="alert alert-success" style="margin-top:1rem;">
+                Paso obligatorio: pega esto en Coolify → Environment Variables y reinicia:
+            </div>
             <code class="mono env-line">ZOHO_REFRESH_TOKEN={{ session('zoho_refresh_token') }}</code>
             @if (session('zoho_api_domain'))
                 <p style="margin-top:0.5rem;font-size:0.8125rem;color:var(--muted);">API domain: {{ session('zoho_api_domain') }}</p>
@@ -73,7 +77,10 @@
 
         <form method="POST" action="{{ route('setup.zoho.test') }}">
             @csrf
-            <p class="desc" style="margin-bottom:0.75rem;">Prueba la conexión con el refresh_token ya configurado en el servidor.</p>
+            <p class="desc" style="margin-bottom:0.75rem;">
+                Usa el <code style="display:inline;padding:0.1rem 0.35rem;">ZOHO_REFRESH_TOKEN</code> ya guardado en Coolify (no el Grant Token).
+                Si en «Estado de configuración» dice Falta, todavía no lo pegaste.
+            </p>
             <button type="submit" class="btn btn-ghost">Probar conexión Zoho Books</button>
         </form>
 

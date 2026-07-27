@@ -39,38 +39,79 @@ class SetupController extends Controller
             return back()->with('zoho_error', 'Zoho no devolvió refresh_token. Verifica los scopes del Grant Token.');
         }
 
-        return back()->with([
-            'zoho_success' => 'Grant Token intercambiado correctamente. Copia el refresh_token a Coolify (.env).',
+        // Verifica Books con el access_token recién obtenido (no depende aún de Coolify).
+        $orgFlash = $this->fetchZohoOrganizations($result['access_token']);
+
+        $flash = [
             'zoho_refresh_token' => $result['refresh_token'],
             'zoho_api_domain' => $result['api_domain'],
-        ]);
+        ];
+
+        if (isset($orgFlash['zoho_error'])) {
+            $flash['zoho_success'] = 'Grant Token intercambiado. Copia ZOHO_REFRESH_TOKEN a Coolify y reinicia.';
+            $flash['zoho_error'] = $orgFlash['zoho_error'];
+        } else {
+            $flash['zoho_success'] = ($orgFlash['zoho_success'] ?? 'Grant Token OK.')
+                .' Copia ZOHO_REFRESH_TOKEN a Coolify, reinicia el servicio y luego usa «Probar conexión».';
+            $flash['zoho_organizations'] = $orgFlash['zoho_organizations'] ?? [];
+        }
+
+        return back()->with($flash);
     }
 
     public function testZoho(ZohoOAuthService $oauth): RedirectResponse
     {
+        if ((string) config('zoho.refresh_token') === '') {
+            return back()->with(
+                'zoho_error',
+                'Falta ZOHO_REFRESH_TOKEN en Coolify. Primero intercambia el Grant Token, copia la línea ZOHO_REFRESH_TOKEN=... a las variables de entorno, reinicia el servicio y vuelve a probar.',
+            );
+        }
+
         try {
             $oauth->clearAccessTokenCache();
             $token = $oauth->refreshAccessToken();
+            $orgFlash = $this->fetchZohoOrganizations($token);
 
-            $response = Http::withHeaders([
-                'Authorization' => 'Zoho-oauthtoken '.$token,
-            ])->timeout((int) config('zoho.timeout', 20))
-                ->get(rtrim((string) config('zoho.api_base_url'), '/').'/organizations');
-
-            if ($response->failed()) {
-                return back()->with('zoho_error', 'Token OK pero Books respondió HTTP '.$response->status());
+            if (isset($orgFlash['zoho_error'])) {
+                return back()->with('zoho_error', $orgFlash['zoho_error']);
             }
 
-            $orgs = $response->json('organizations') ?? [];
-            $labels = collect($orgs)->map(fn ($o) => "[{$o['organization_id']}] ".($o['name'] ?? ''))->take(10)->values()->all();
-
-            return back()->with([
-                'zoho_success' => 'Conexión Zoho Books OK. Organizaciones: '.count($orgs),
-                'zoho_organizations' => $labels,
-            ]);
+            return back()->with(array_merge([
+                'zoho_success' => 'Conexión Zoho Books OK (refresh_token del servidor).',
+            ], $orgFlash));
         } catch (ExternalApiException $e) {
             return back()->with('zoho_error', $e->getMessage());
         }
+    }
+
+    /**
+     * @return array{zoho_organizations?: list<string>, zoho_error?: string, zoho_success?: string}
+     */
+    private function fetchZohoOrganizations(string $accessToken): array
+    {
+        $response = Http::withHeaders([
+            'Authorization' => 'Zoho-oauthtoken '.$accessToken,
+        ])->timeout((int) config('zoho.timeout', 20))
+            ->get(rtrim((string) config('zoho.api_base_url'), '/').'/organizations');
+
+        if ($response->failed()) {
+            return [
+                'zoho_error' => 'Token OK pero Books respondió HTTP '.$response->status().'. Revisa ZOHO_API_BASE_URL (com vs eu).',
+            ];
+        }
+
+        $orgs = $response->json('organizations') ?? [];
+        $labels = collect($orgs)
+            ->map(fn ($o) => "[{$o['organization_id']}] ".($o['name'] ?? ''))
+            ->take(10)
+            ->values()
+            ->all();
+
+        return [
+            'zoho_organizations' => $labels,
+            'zoho_success' => 'Conexión Zoho Books OK. Organizaciones: '.count($orgs),
+        ];
     }
 
     public function testSiigo(SiigoAuthService $auth, SiigoCatalogService $catalogs): RedirectResponse

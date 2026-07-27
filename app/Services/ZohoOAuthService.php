@@ -146,12 +146,14 @@ class ZohoOAuthService
             );
         }
 
-        if ($response->failed()) {
+        // Zoho OAuth a veces responde HTTP 200 con {"error":"..."} sin access_token.
+        $body = $response->json();
+        if ($response->failed() || (is_array($body) && isset($body['error']))) {
             throw new ExternalApiException(
                 $this->oauthErrorMessage($response),
                 'zoho',
                 $response->status(),
-                is_array($response->json()) ? $response->json() : ['raw' => $response->body()],
+                is_array($body) ? $body : ['raw' => $response->body()],
             );
         }
 
@@ -164,7 +166,16 @@ class ZohoOAuthService
         $token = $body['access_token'] ?? null;
 
         if (! is_string($token) || $token === '') {
-            throw new ExternalApiException($failureMessage, 'zoho', $response->status(), $body);
+            $detail = is_string($body['error'] ?? null)
+                ? ' ('.$body['error'].')'
+                : '';
+
+            throw new ExternalApiException(
+                $failureMessage.$detail,
+                'zoho',
+                $response->status(),
+                $body,
+            );
         }
 
         $this->cacheAccessToken($token, (int) ($body['expires_in'] ?? 3600));
@@ -198,7 +209,7 @@ class ZohoOAuthService
         return match ($error) {
             'invalid_code' => 'Grant Token inválido o expirado. Genera uno nuevo en Zoho API Console → Self Client → Generate Code.',
             'invalid_client' => 'Client ID o Client Secret incorrectos. Revisa ZOHO_CLIENT_ID y ZOHO_CLIENT_SECRET.',
-            'invalid_grant' => 'Refresh token inválido o revocado. Genera un nuevo Grant Token con php artisan zoho:exchange-grant-token.',
+            'invalid_grant' => 'Refresh token inválido o revocado. Copia el ZOHO_REFRESH_TOKEN que mostró el panel a Coolify, reinicia el servicio y vuelve a intercambiar un Grant Token nuevo si hace falta.',
             default => 'Error OAuth de Zoho: '.($body['error'] ?? $response->body()),
         };
     }

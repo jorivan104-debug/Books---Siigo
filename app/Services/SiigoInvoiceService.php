@@ -90,17 +90,63 @@ class SiigoInvoiceService
         }
 
         if ($response->failed()) {
+            $body = $response->json();
+            $detail = $this->formatSiigoErrorDetail(is_array($body) ? $body : [], (string) $response->body());
+
             throw new ExternalApiException(
-                'Siigo rechazó la creación de la factura.',
+                'Siigo rechazó la creación de la factura.'.$detail,
                 'siigo',
                 $response->status(),
                 array_merge(
-                    is_array($response->json()) ? $response->json() : ['raw' => $response->body()],
+                    is_array($body) ? $body : ['raw' => $response->body()],
                     ['_request' => $payload->toArray()],
                 ),
             );
         }
 
         return $response->json() ?? [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function formatSiigoErrorDetail(array $body, string $raw): string
+    {
+        $errors = $body['Errors'] ?? $body['errors'] ?? null;
+        if (is_array($errors) && $errors !== []) {
+            $parts = [];
+            foreach (array_slice($errors, 0, 5) as $error) {
+                if (! is_array($error)) {
+                    $parts[] = (string) $error;
+                    continue;
+                }
+                $code = $error['Code'] ?? $error['code'] ?? null;
+                $message = $error['Message'] ?? $error['message'] ?? $error['Detail'] ?? $error['detail'] ?? null;
+                $params = $error['Params'] ?? $error['params'] ?? null;
+                $chunk = trim(implode(' — ', array_filter([
+                    is_string($code) || is_numeric($code) ? (string) $code : null,
+                    is_string($message) ? $message : null,
+                    is_array($params) ? json_encode($params, JSON_UNESCAPED_UNICODE) : (is_string($params) ? $params : null),
+                ])));
+                if ($chunk !== '') {
+                    $parts[] = $chunk;
+                }
+            }
+            if ($parts !== []) {
+                return ' '.implode(' | ', $parts);
+            }
+        }
+
+        if (isset($body['Message']) && is_string($body['Message']) && $body['Message'] !== '') {
+            return ' '.$body['Message'];
+        }
+
+        if (isset($body['message']) && is_string($body['message']) && $body['message'] !== '') {
+            return ' '.$body['message'];
+        }
+
+        $preview = trim(mb_substr($raw, 0, 280));
+
+        return $preview !== '' ? ' HTTP detail: '.$preview : '';
     }
 }

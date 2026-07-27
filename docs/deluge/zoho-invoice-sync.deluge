@@ -48,6 +48,11 @@ if(response.get("success") == true)
 }
 
 msg = ifnull(response.get("message"),"");
+details = ifnull(response.get("details"),Map());
+if(details != null && details.toString() != "{}" && details.toString() != "")
+{
+	msg = msg + " | Detalles: " + details.toString();
+}
 if(msg == "")
 {
 	msg = "Respuesta hub: " + respText;

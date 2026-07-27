@@ -50,8 +50,8 @@
             <li>Ve a <a href="https://api-console.zoho.com" target="_blank" rel="noopener" style="color:#93c5fd">api-console.zoho.com</a> → Self Client → Generate Code</li>
             <li>Scopes: <code style="display:inline;padding:0.1rem 0.35rem;font-size:0.75rem;">{{ $zohoScopes }}</code></li>
             <li>Pega el Grant Token abajo (caduca en minutos)</li>
-            <li>Copia el <code style="display:inline;padding:0.1rem 0.35rem;">ZOHO_REFRESH_TOKEN</code> a Coolify y reinicia el servicio</li>
-            <li>Solo entonces usa «Probar conexión»</li>
+            <li>Copia el <code style="display:inline;padding:0.1rem 0.35rem;">ZOHO_REFRESH_TOKEN</code> a Coolify <strong>o</strong> déjalo guardado automáticamente tras intercambiar</li>
+            <li>Usa «Probar conexión» (ya no borra el token recién intercambiado)</li>
         </ol>
 
         <form method="POST" action="{{ route('setup.zoho.exchange') }}">

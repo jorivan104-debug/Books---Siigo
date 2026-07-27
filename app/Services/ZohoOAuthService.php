@@ -6,11 +6,14 @@ use App\Exceptions\ExternalApiException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class ZohoOAuthService
 {
     private const ACCESS_TOKEN_CACHE_KEY = 'zoho:access_token';
+
+    private const REFRESH_TOKEN_STORAGE = 'zoho_oauth.json';
 
     /**
      * Obtiene un access_token válido (desde cache o refrescando el refresh_token).
@@ -26,17 +29,16 @@ class ZohoOAuthService
     }
 
     /**
-     * Refresca el access_token usando ZOHO_REFRESH_TOKEN.
-     * Funciona tanto para Self Client como para Server-based Application.
+     * Refresca el access_token usando ZOHO_REFRESH_TOKEN (env o archivo de /setup).
      */
     public function refreshAccessToken(): string
     {
         $this->assertClientCredentials();
 
-        $refreshToken = trim((string) config('zoho.refresh_token'));
+        $refreshToken = $this->resolveRefreshToken();
         if ($refreshToken === '') {
             throw new ExternalApiException(
-                'ZOHO_REFRESH_TOKEN no configurado. Para Self Client, genera un Grant Token en api-console.zoho.com y ejecuta: php artisan zoho:exchange-grant-token {code}',
+                'ZOHO_REFRESH_TOKEN no configurado. En /setup intercambia un Grant Token (Self Client) o define la variable en Coolify.',
                 'zoho',
             );
         }
@@ -44,8 +46,8 @@ class ZohoOAuthService
         $response = $this->tokenRequest([
             'grant_type' => 'refresh_token',
             'refresh_token' => $refreshToken,
-            'client_id' => trim((string) config('zoho.client_id')),
-            'client_secret' => trim((string) config('zoho.client_secret')),
+            'client_id' => $this->clientId(),
+            'client_secret' => $this->clientSecret(),
         ]);
 
         return $this->storeAccessTokenFromResponse($response, 'No se pudo refrescar el access_token de Zoho.');
@@ -53,9 +55,6 @@ class ZohoOAuthService
 
     /**
      * Intercambia un Grant Token (Self Client) por access_token y refresh_token.
-     *
-     * El Grant Token se genera en api-console.zoho.com → Self Client → Generate Code.
-     * Es de un solo uso y caduca en minutos.
      *
      * @return array{access_token: string, refresh_token: string|null, expires_in: int, api_domain: string|null}
      */
@@ -69,14 +68,13 @@ class ZohoOAuthService
 
         $payload = [
             'grant_type' => 'authorization_code',
-            'client_id' => trim((string) config('zoho.client_id')),
-            'client_secret' => trim((string) config('zoho.client_secret')),
-            'code' => trim($grantToken),
+            'client_id' => $this->clientId(),
+            'client_secret' => $this->clientSecret(),
+            'code' => $this->sanitizeSecret($grantToken),
         ];
 
-        // Server-based Application requiere redirect_uri; Self Client no.
         if ($this->isServerClient()) {
-            $redirectUri = (string) config('zoho.redirect_uri');
+            $redirectUri = trim((string) config('zoho.redirect_uri'));
             if ($redirectUri === '') {
                 throw new ExternalApiException(
                     'ZOHO_REDIRECT_URI es obligatorio cuando ZOHO_CLIENT_TYPE=server.',
@@ -87,7 +85,6 @@ class ZohoOAuthService
         }
 
         $response = $this->tokenRequest($payload);
-
         $body = $response->json() ?? [];
         $accessToken = $body['access_token'] ?? null;
 
@@ -96,17 +93,24 @@ class ZohoOAuthService
                 'Zoho no devolvió access_token al intercambiar el Grant Token.',
                 'zoho',
                 $response->status(),
-                $body,
+                is_array($body) ? $body : [],
             );
         }
 
         $this->cacheAccessToken($accessToken, (int) ($body['expires_in'] ?? 3600));
 
+        $refreshToken = isset($body['refresh_token']) ? $this->sanitizeSecret((string) $body['refresh_token']) : null;
+        $apiDomain = isset($body['api_domain']) ? (string) $body['api_domain'] : null;
+
+        if ($refreshToken !== null && $refreshToken !== '') {
+            $this->persistOAuthSecrets($refreshToken, $apiDomain);
+        }
+
         return [
             'access_token' => $accessToken,
-            'refresh_token' => isset($body['refresh_token']) ? (string) $body['refresh_token'] : null,
+            'refresh_token' => $refreshToken,
             'expires_in' => (int) ($body['expires_in'] ?? 3600),
-            'api_domain' => isset($body['api_domain']) ? (string) $body['api_domain'] : null,
+            'api_domain' => $apiDomain,
         ];
     }
 
@@ -125,50 +129,109 @@ class ZohoOAuthService
         Cache::forget(self::ACCESS_TOKEN_CACHE_KEY);
     }
 
+    public function resolveRefreshToken(): string
+    {
+        $fromEnv = $this->sanitizeSecret((string) config('zoho.refresh_token'));
+        if ($fromEnv !== '') {
+            return $fromEnv;
+        }
+
+        $stored = $this->readStoredOAuth();
+
+        return $this->sanitizeSecret((string) ($stored['refresh_token'] ?? ''));
+    }
+
     /**
      * @param  array<string, string>  $payload
      */
     private function tokenRequest(array $payload): Response
     {
-        $accountsUrl = rtrim((string) config('zoho.accounts_url'), '/');
+        $accountsCandidates = $this->accountsUrlCandidates();
+        $lastResponse = null;
+        $errors = [];
 
-        try {
-            $response = Http::asForm()
-                ->timeout((int) config('zoho.timeout', 20))
-                ->post("{$accountsUrl}/oauth/v2/token", $payload);
-        } catch (Throwable $e) {
+        foreach ($accountsCandidates as $accountsUrl) {
+            try {
+                // Estilo documentado por Zoho: POST con parámetros en query string.
+                $response = Http::asForm()
+                    ->timeout((int) config('zoho.timeout', 20))
+                    ->withOptions(['allow_redirects' => false])
+                    ->post($accountsUrl.'/oauth/v2/token?'.http_build_query($payload));
+
+                if ($this->isSuccessfulTokenResponse($response)) {
+                    return $response;
+                }
+
+                // Fallback: body form-urlencoded.
+                $response = Http::asForm()
+                    ->timeout((int) config('zoho.timeout', 20))
+                    ->withOptions(['allow_redirects' => false])
+                    ->post($accountsUrl.'/oauth/v2/token', $payload);
+
+                if ($this->isSuccessfulTokenResponse($response)) {
+                    return $response;
+                }
+
+                $lastResponse = $response;
+                $errors[] = $accountsUrl.' → HTTP '.$response->status();
+            } catch (Throwable $e) {
+                $errors[] = $accountsUrl.' → '.$e->getMessage();
+                Log::warning('Zoho OAuth network error', [
+                    'accounts_url' => $accountsUrl,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        if ($lastResponse instanceof Response) {
             throw new ExternalApiException(
-                'Error de red al contactar Zoho OAuth: '.$e->getMessage(),
+                $this->oauthErrorMessage($lastResponse, $errors),
                 'zoho',
-                null,
-                [],
-                $e,
+                $lastResponse->status(),
+                ['tried' => $errors, 'raw_preview' => mb_substr((string) $lastResponse->body(), 0, 200)],
             );
         }
 
-        // Zoho OAuth a veces responde HTTP 200 con {"error":"..."} sin access_token,
-        // o HTML de error (roadblock) en lugar de JSON.
+        throw new ExternalApiException(
+            'Error de red al contactar Zoho OAuth. Intentos: '.implode('; ', $errors),
+            'zoho',
+        );
+    }
+
+    private function isSuccessfulTokenResponse(Response $response): bool
+    {
         $body = $response->json();
         $raw = (string) $response->body();
         $looksLikeHtml = str_starts_with(ltrim($raw), '<')
             || str_contains(strtolower((string) $response->header('Content-Type')), 'text/html');
 
-        if (
-            $response->failed()
-            || $looksLikeHtml
-            || ! is_array($body)
-            || isset($body['error'])
-            || empty($body['access_token'])
-        ) {
-            throw new ExternalApiException(
-                $this->oauthErrorMessage($response),
-                'zoho',
-                $response->status(),
-                is_array($body) ? $body : ['raw_preview' => mb_substr($raw, 0, 200)],
-            );
+        return ! $response->failed()
+            && ! $looksLikeHtml
+            && is_array($body)
+            && ! isset($body['error'])
+            && ! empty($body['access_token']);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function accountsUrlCandidates(): array
+    {
+        $primary = rtrim((string) config('zoho.accounts_url', 'https://accounts.zoho.com'), '/');
+        $candidates = [$primary];
+
+        // Fallback regional habitual en LATAM / multi-DC.
+        foreach ([
+            'https://accounts.zoho.com',
+            'https://accounts.zoho.com.co',
+            'https://accounts.zoho.eu',
+        ] as $url) {
+            if (! in_array($url, $candidates, true)) {
+                $candidates[] = $url;
+            }
         }
 
-        return $response;
+        return $candidates;
     }
 
     private function storeAccessTokenFromResponse(Response $response, string $failureMessage): string
@@ -177,12 +240,8 @@ class ZohoOAuthService
         $token = $body['access_token'] ?? null;
 
         if (! is_string($token) || $token === '') {
-            $detail = is_string($body['error'] ?? null)
-                ? ' ('.$body['error'].')'
-                : '';
-
             throw new ExternalApiException(
-                $failureMessage.$detail,
+                $failureMessage,
                 'zoho',
                 $response->status(),
                 is_array($body) ? $body : [],
@@ -201,10 +260,7 @@ class ZohoOAuthService
 
     private function assertClientCredentials(): void
     {
-        $clientId = trim((string) config('zoho.client_id'));
-        $clientSecret = trim((string) config('zoho.client_secret'));
-
-        if ($clientId === '' || $clientSecret === '') {
+        if ($this->clientId() === '' || $this->clientSecret() === '') {
             throw new ExternalApiException(
                 'Credenciales de Zoho no configuradas (ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET).',
                 'zoho',
@@ -212,22 +268,73 @@ class ZohoOAuthService
         }
     }
 
-    private function oauthErrorMessage(Response $response): string
+    private function clientId(): string
+    {
+        return $this->sanitizeSecret((string) config('zoho.client_id'));
+    }
+
+    private function clientSecret(): string
+    {
+        return $this->sanitizeSecret((string) config('zoho.client_secret'));
+    }
+
+    private function sanitizeSecret(string $value): string
+    {
+        $value = trim($value);
+        $value = trim($value, "\"'");
+
+        return preg_replace('/\s+/', '', $value) ?? $value;
+    }
+
+    private function persistOAuthSecrets(string $refreshToken, ?string $apiDomain): void
+    {
+        $path = storage_path('app/'.self::REFRESH_TOKEN_STORAGE);
+        $payload = [
+            'refresh_token' => $refreshToken,
+            'api_domain' => $apiDomain,
+            'updated_at' => now()->toIso8601String(),
+        ];
+
+        if (@file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) === false) {
+            Log::warning('No se pudo persistir zoho_oauth.json en storage/app.');
+        }
+    }
+
+    /**
+     * @return array{refresh_token?: string, api_domain?: string}
+     */
+    private function readStoredOAuth(): array
+    {
+        $path = storage_path('app/'.self::REFRESH_TOKEN_STORAGE);
+        if (! is_file($path)) {
+            return [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param  list<string>  $tried
+     */
+    private function oauthErrorMessage(Response $response, array $tried = []): string
     {
         $body = $response->json();
         $raw = (string) $response->body();
         $error = is_array($body) ? ($body['error'] ?? null) : null;
         $accountsUrl = rtrim((string) config('zoho.accounts_url'), '/');
+        $suffix = $tried !== [] ? ' Intentos: '.implode('; ', $tried).'.' : '';
 
         if (str_starts_with(ltrim($raw), '<') || str_contains(strtolower((string) $response->header('Content-Type')), 'text/html')) {
-            return 'Zoho Accounts rechazó el OAuth (respuesta HTML). Revisa ZOHO_CLIENT_ID/SECRET, regenera ZOHO_REFRESH_TOKEN en /setup y confirma ZOHO_ACCOUNTS_URL (actual: '.$accountsUrl.'). Si tu cuenta es .eu/.in/.com.au, cambia la URL de accounts.';
+            return 'Zoho Accounts rechazó el OAuth (HTML). Pasos: 1) En /setup genera Grant Token nuevo e intercámbialo. 2) Copia ZOHO_REFRESH_TOKEN a Coolify o deja que el panel lo guarde en disco. 3) Verifica CLIENT_ID/SECRET del Self Client. URL configurada: '.$accountsUrl.'.'.$suffix;
         }
 
         return match ($error) {
-            'invalid_code' => 'Grant Token inválido o expirado. Genera uno nuevo en Zoho API Console → Self Client → Generate Code.',
-            'invalid_client' => 'Client ID o Client Secret incorrectos. Revisa ZOHO_CLIENT_ID y ZOHO_CLIENT_SECRET.',
-            'invalid_grant' => 'Refresh token inválido o revocado. En /setup intercambia un Grant Token nuevo, copia ZOHO_REFRESH_TOKEN a Coolify y reinicia.',
-            default => 'Error OAuth de Zoho: '.(is_string($error) ? $error : 'HTTP '.$response->status().' sin access_token. Revisa refresh_token y ZOHO_ACCOUNTS_URL='.$accountsUrl),
+            'invalid_code' => 'Grant/refresh token inválido o ya usado. Genera un Grant Token nuevo en Self Client → Generate Code.'.$suffix,
+            'invalid_client', 'invalid_client_secret' => 'Client ID o Client Secret incorrectos, o datacenter distinto al del Self Client.'.$suffix,
+            'invalid_grant' => 'Refresh token inválido o revocado. Vuelve a intercambiar un Grant Token en /setup.'.$suffix,
+            default => 'Error OAuth de Zoho: '.(is_string($error) ? $error : 'HTTP '.$response->status()).'.'.$suffix,
         };
     }
 }

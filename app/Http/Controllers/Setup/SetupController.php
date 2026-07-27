@@ -52,7 +52,7 @@ class SetupController extends Controller
             $flash['zoho_error'] = $orgFlash['zoho_error'];
         } else {
             $flash['zoho_success'] = ($orgFlash['zoho_success'] ?? 'Grant Token OK.')
-                .' Copia ZOHO_REFRESH_TOKEN a Coolify, reinicia el servicio y luego usa «Probar conexión».';
+                .' El refresh_token quedó guardado en el servidor; también puedes copiarlo a Coolify.';
             $flash['zoho_organizations'] = $orgFlash['zoho_organizations'] ?? [];
         }
 
@@ -61,24 +61,31 @@ class SetupController extends Controller
 
     public function testZoho(ZohoOAuthService $oauth): RedirectResponse
     {
-        if ((string) config('zoho.refresh_token') === '') {
+        if ($oauth->resolveRefreshToken() === '') {
             return back()->with(
                 'zoho_error',
-                'Falta ZOHO_REFRESH_TOKEN en Coolify. Primero intercambia el Grant Token, copia la línea ZOHO_REFRESH_TOKEN=... a las variables de entorno, reinicia el servicio y vuelve a probar.',
+                'Falta refresh token. Intercambia un Grant Token arriba (se guarda automáticamente) o define ZOHO_REFRESH_TOKEN en Coolify y reinicia.',
             );
         }
 
         try {
-            $oauth->clearAccessTokenCache();
-            $token = $oauth->refreshAccessToken();
+            // No borramos el access_token recién intercambiado; solo forzamos refresh si no hay cache.
+            $token = $oauth->getAccessToken();
             $orgFlash = $this->fetchZohoOrganizations($token);
+
+            if (isset($orgFlash['zoho_error'])) {
+                // Si el access cacheado falló contra Books, forzar refresh.
+                $oauth->clearAccessTokenCache();
+                $token = $oauth->refreshAccessToken();
+                $orgFlash = $this->fetchZohoOrganizations($token);
+            }
 
             if (isset($orgFlash['zoho_error'])) {
                 return back()->with('zoho_error', $orgFlash['zoho_error']);
             }
 
             return back()->with(array_merge([
-                'zoho_success' => 'Conexión Zoho Books OK (refresh_token del servidor).',
+                'zoho_success' => 'Conexión Zoho Books OK.',
             ], $orgFlash));
         } catch (ExternalApiException $e) {
             return back()->with('zoho_error', $e->getMessage());
@@ -145,8 +152,9 @@ class SetupController extends Controller
                 'hint' => 'ZOHO_CLIENT_SECRET',
             ],
             'zoho_refresh_token' => [
-                'configured' => (string) config('zoho.refresh_token') !== '',
-                'hint' => 'ZOHO_REFRESH_TOKEN',
+                'configured' => (string) config('zoho.refresh_token') !== ''
+                    || is_file(storage_path('app/zoho_oauth.json')),
+                'hint' => 'ZOHO_REFRESH_TOKEN (env o /setup)',
             ],
             'siigo_username' => [
                 'configured' => (string) config('siigo.username') !== '',

@@ -5,15 +5,14 @@
 | Mapeo de productos Zoho → Siigo
 |--------------------------------------------------------------------------
 |
-| Permite traducir el SKU/Item de Zoho Books al código de producto en Siigo
-| Nube cuando no son iguales. Si un SKU no aparece aquí, se usa tal cual
-| como `items.code` en el POST /v1/invoices.
+| Si SIIGO_DEFAULT_PRODUCT_CODE está definido en .env, ese código se usa
+| para TODAS las líneas y este mapa se ignora.
+|
+| Si no hay default, permite traducir SKU Zoho → código Siigo. Si un SKU
+| no aparece aquí, se usa tal cual como `items.code`.
 |
 | Formato:
 |   'sku_zoho' => 'codigo_siigo',
-|
-| Ejemplo:
-|   'ZOHO-001' => 'SIIGO-PROD-1',
 |
 */
 

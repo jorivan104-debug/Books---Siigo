@@ -1,26 +1,8 @@
 # syntax=docker/dockerfile:1.6
 
-# Dependencias PHP en stage Composer.
-# En algunos hosts Coolify, HTTPS a api.github.com falla con curl 60
-# (certificado que no coincide con el hostname: proxy/MITM/DNS).
-# disable-tls/secure-http=false evita ese bloqueo solo en build.
-FROM composer:2 AS vendor
-
-WORKDIR /app
-
-COPY composer.json composer.lock ./
-
-RUN composer config -g -- disable-tls true \
-    && composer config -g -- secure-http false \
-    && composer install \
-        --no-dev \
-        --no-interaction \
-        --no-progress \
-        --no-scripts \
-        --prefer-dist \
-        --ignore-platform-reqs
-
-# Imagen única (php-fpm + nginx) pensada para despliegue en Coolify.
+# Imagen única (php-fpm + nginx) para Coolify.
+# vendor/ va en el repo: el host de build no puede descargar de
+# api.github.com (curl 60 / certificado SSL incorrecto).
 FROM php:8.4-fpm-alpine AS base
 
 # Extensiones PHP necesarias
@@ -49,20 +31,14 @@ RUN apk add --no-cache \
         zip \
     && rm -rf /var/cache/apk/* /tmp/*
 
-# Composer (solo para dump-autoload / scripts en build)
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
 WORKDIR /var/www/html
-
-COPY composer.json composer.lock ./
-COPY --from=vendor /app/vendor ./vendor
 
 COPY . .
 
-RUN composer dump-autoload --optimize \
-    && mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
+RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache \
-    && chmod -R 775 storage bootstrap/cache
+    && chmod -R 775 storage bootstrap/cache \
+    && test -f vendor/autoload.php
 
 COPY docker/nginx/default.conf /etc/nginx/http.d/default.conf
 COPY docker/supervisor/supervisord.conf /etc/supervisord.conf

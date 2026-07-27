@@ -19,6 +19,8 @@ RUN apk add --no-cache \
         postgresql-dev \
         supervisor \
         zip \
+        sqlite-libs \
+        sqlite-dev \
     && update-ca-certificates \
     && docker-php-ext-install -j$(nproc) \
         bcmath \
@@ -28,6 +30,7 @@ RUN apk add --no-cache \
         pcntl \
         pdo_mysql \
         pdo_pgsql \
+        pdo_sqlite \
         zip \
     && rm -rf /var/cache/apk/* /tmp/*
 
@@ -35,9 +38,10 @@ WORKDIR /var/www/html
 
 COPY . .
 
-RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
-    && chown -R www-data:www-data storage bootstrap/cache \
-    && chmod -R 775 storage bootstrap/cache \
+RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache database \
+    && touch database/database.sqlite \
+    && chown -R www-data:www-data storage bootstrap/cache database \
+    && chmod -R 775 storage bootstrap/cache database \
     && test -f vendor/autoload.php
 
 COPY docker/nginx/default.conf /etc/nginx/http.d/default.conf

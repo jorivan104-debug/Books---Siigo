@@ -44,7 +44,7 @@ class ZohoToSiigoInvoiceSyncService
                 'message' => $e->getMessage(),
                 'siigo_invoice_link' => $e->existingLink,
                 'details' => ['reason' => 'already_synced'],
-                'log_id' => $log->id,
+                'log_id' => $log?->id,
             ];
             $this->logs->skipped($log, $e->getMessage(), $payload);
 
@@ -54,7 +54,7 @@ class ZohoToSiigoInvoiceSyncService
                 'success' => false,
                 'message' => $e->getMessage(),
                 'details' => ['reason' => 'validation'],
-                'log_id' => $log->id,
+                'log_id' => $log?->id,
             ];
             $this->logs->failed($log, $e->getMessage(), ['reason' => 'validation'], $payload);
 
@@ -64,7 +64,7 @@ class ZohoToSiigoInvoiceSyncService
                 'success' => false,
                 'message' => $e->getMessage(),
                 'details' => $e->context(),
-                'log_id' => $log->id,
+                'log_id' => $log?->id,
             ];
             $this->logs->failed($log, $e->getMessage(), $e->context(), $payload);
 
@@ -74,7 +74,7 @@ class ZohoToSiigoInvoiceSyncService
                 'success' => false,
                 'message' => 'Error inesperado durante la sincronización.',
                 'details' => ['exception' => $e->getMessage()],
-                'log_id' => $log->id,
+                'log_id' => $log?->id,
             ];
             $this->logs->failed($log, $e->getMessage(), ['exception' => $e::class, 'trace' => $e->getMessage()], $payload);
 
@@ -82,7 +82,7 @@ class ZohoToSiigoInvoiceSyncService
         }
     }
 
-    private function run(IntegrationLog $log, string $organizationId, string $invoiceId): array
+    private function run(?IntegrationLog $log, string $organizationId, string $invoiceId): array
     {
         $invoice = $this->zoho->getInvoice($organizationId, $invoiceId);
 
@@ -181,7 +181,7 @@ class ZohoToSiigoInvoiceSyncService
             'message' => 'Factura sincronizada correctamente.',
             'siigo_invoice_id' => $siigoInvoiceId,
             'siigo_invoice_link' => $linkToStore,
-            'log_id' => $log->id,
+            'log_id' => $log?->id,
         ];
 
         $this->logs->success($log, $payload, 'Factura sincronizada correctamente.', $siigoInvoiceId);

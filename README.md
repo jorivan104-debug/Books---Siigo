@@ -114,8 +114,15 @@ La imagen expone el puerto `8080` (nginx) y se publica en `8000` del host. Para 
 
 1. Apunta el repositorio y elige `Dockerfile` como build type.
 2. Define el puerto público `8080`.
-3. Configura todas las variables de entorno listadas en `.env.example`.
-4. Tras desplegar, Coolify ejecutará automáticamente `php artisan migrate --force` vía el entrypoint.
+3. Configura las variables de entorno de `.env.example`.
+4. **Base de datos (recomendado en Coolify):** usa SQLite sin MySQL externo:
+   ```env
+   DB_CONNECTION=sqlite
+   DB_DATABASE=/var/www/html/database/database.sqlite
+   QUEUE_CONNECTION=sync
+   ```
+   Si usas MySQL, el recurso debe estar **linkeado** a la app (misma red Docker) y `DB_HOST` debe ser el hostname interno vigente.
+5. Tras desplegar, el entrypoint ejecuta `php artisan migrate --force`.
 
 ## Estructura
 

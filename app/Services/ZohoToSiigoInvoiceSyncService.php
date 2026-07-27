@@ -9,6 +9,7 @@ use App\Exceptions\InvoiceAlreadySyncedException;
 use App\Models\IntegrationLog;
 use App\Support\SiigoIdTypeMapper;
 use App\Support\ZohoCustomFieldHelper;
+use Carbon\Carbon;
 use InvalidArgumentException;
 
 class ZohoToSiigoInvoiceSyncService
@@ -134,19 +135,20 @@ class ZohoToSiigoInvoiceSyncService
         }
 
         $total = (float) ($invoice['total'] ?? 0);
+        $siigoDate = $this->resolveInvoiceDate($invoice);
         $payments = $this->siigoInvoices->buildPayment(
             $total,
-            $this->resolveDueDate($invoice),
+            $this->resolveDueDate($invoice, $siigoDate),
         );
 
         $dto = new SiigoInvoicePayload(
             documentId: (int) config('siigo.document_id'),
-            date: (string) ($invoice['date'] ?? now()->toDateString()),
+            date: $siigoDate,
             customer: $customerBlock,
             seller: (int) config('siigo.seller_id'),
             items: $items,
             payments: $payments,
-            observations: $this->buildObservations($invoice),
+            observations: $this->buildObservations($invoice, $siigoDate),
             sendToDian: (bool) config('siigo.invoice.send_to_dian', false),
             sendMail: (bool) config('siigo.invoice.send_mail', false),
         );
@@ -189,15 +191,63 @@ class ZohoToSiigoInvoiceSyncService
         return $payload;
     }
 
-    private function resolveDueDate(array $invoice): ?string
+    private function resolveInvoiceDate(array $invoice): string
     {
-        return $invoice['due_date'] ?? null;
+        $today = now()->startOfDay();
+        $mode = strtolower((string) config('siigo.invoice.date_mode', 'today'));
+
+        if ($mode === 'today') {
+            return $today->toDateString();
+        }
+
+        $raw = $invoice['date'] ?? null;
+        if (! is_string($raw) || trim($raw) === '') {
+            return $today->toDateString();
+        }
+
+        try {
+            $zohoDate = Carbon::parse($raw)->startOfDay();
+        } catch (\Throwable) {
+            return $today->toDateString();
+        }
+
+        $maxPast = max(0, (int) config('siigo.invoice.date_max_days_past', 3));
+        $maxFuture = max(0, (int) config('siigo.invoice.date_max_days_future', 0));
+        $earliest = $today->copy()->subDays($maxPast);
+        $latest = $today->copy()->addDays($maxFuture);
+
+        if ($zohoDate->lt($earliest) || $zohoDate->gt($latest)) {
+            return $today->toDateString();
+        }
+
+        return $zohoDate->toDateString();
     }
 
-    private function buildObservations(array $invoice): string
+    private function resolveDueDate(array $invoice, string $siigoDate): ?string
+    {
+        $raw = $invoice['due_date'] ?? null;
+        if (! is_string($raw) || trim($raw) === '') {
+            return $siigoDate;
+        }
+
+        try {
+            $due = Carbon::parse($raw)->startOfDay();
+            $invoiceDay = Carbon::parse($siigoDate)->startOfDay();
+            if ($due->lt($invoiceDay)) {
+                return $siigoDate;
+            }
+
+            return $due->toDateString();
+        } catch (\Throwable) {
+            return $siigoDate;
+        }
+    }
+
+    private function buildObservations(array $invoice, string $siigoDate): string
     {
         $number = $invoice['invoice_number'] ?? $invoice['number'] ?? null;
         $id = $invoice['invoice_id'] ?? null;
+        $zohoDate = $invoice['date'] ?? null;
         $parts = ['Sincronizada desde Zoho Books'];
 
         if ($number !== null) {
@@ -205,6 +255,9 @@ class ZohoToSiigoInvoiceSyncService
         }
         if ($id !== null) {
             $parts[] = 'ID Zoho: '.$id;
+        }
+        if (is_string($zohoDate) && $zohoDate !== '' && $zohoDate !== $siigoDate) {
+            $parts[] = 'Fecha Zoho: '.$zohoDate;
         }
 
         return implode(' | ', $parts);

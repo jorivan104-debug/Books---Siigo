@@ -117,6 +117,11 @@ return [
     'invoice' => [
         'send_to_dian' => env('SIIGO_INVOICE_SEND_DIAN', false),
         'send_mail' => env('SIIGO_INVOICE_SEND_MAIL', false),
+        // Siigo/DIAN: fechas fuera de ventana → invalid_date (típicamente ± pocos días).
+        // today = siempre hoy | zoho = fecha Zoho si está en ventana, si no hoy
+        'date_mode' => env('SIIGO_INVOICE_DATE_MODE', 'today'),
+        'date_max_days_past' => (int) env('SIIGO_INVOICE_DATE_MAX_DAYS_PAST', 3),
+        'date_max_days_future' => (int) env('SIIGO_INVOICE_DATE_MAX_DAYS_FUTURE', 0),
     ],
 
     /*

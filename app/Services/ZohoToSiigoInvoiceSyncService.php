@@ -134,7 +134,9 @@ class ZohoToSiigoInvoiceSyncService
             throw new InvalidArgumentException('La factura de Zoho no tiene ítems para sincronizar.');
         }
 
-        $total = (float) ($invoice['total'] ?? 0);
+        // El pago debe coincidir con el total que Siigo calcula (base + IVA), no solo con Zoho.total.
+        // Si se envía 78000 y Siigo calcula 92820 → invalid_total_payments.
+        $total = $this->siigoInvoices->estimateTotalWithTax($items);
         $siigoDate = $this->resolveInvoiceDate($invoice);
         $payments = $this->siigoInvoices->buildPayment(
             $total,

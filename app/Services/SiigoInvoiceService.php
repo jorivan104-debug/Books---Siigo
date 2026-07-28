@@ -20,10 +20,9 @@ class SiigoInvoiceService
      *   sku             → code (override por SIIGO_DEFAULT_PRODUCT_CODE o siigo_product_map)
      *   name            → description (o SIIGO_DEFAULT_PRODUCT_DESCRIPTION)
      *   quantity        → quantity
-     *   rate            → price (si Zoho viene sin IVA y SIIGO_FORCE_IVA_ON_UNTAXED,
-     *                     el rate se trata como precio con IVA incluido y se divide ÷1.19)
+     *   rate            → price (con SIIGO_FORCE_IVA_ON_UNTAXED el rate de Zoho es CON IVA
+     *                     incluido → se divide ÷1.19 y se adjunta taxes IVA 19%)
      *   discount_amount → discount (también se descompone si aplica)
-     *   tax_percentage > 0 → taxes IVA; si = 0 y force IVA → también se aplica IVA 19%
      */
     public function buildItemsFromZohoLineItems(array $lineItems): array
     {
@@ -56,13 +55,11 @@ class SiigoInvoiceService
             $quantity = (float) ($line['quantity'] ?? 0);
             $rate = (float) ($line['rate'] ?? 0);
             $discount = (float) ($line['discount_amount'] ?? 0);
-            $taxPercentage = $this->resolveZohoTaxPercentage($line);
 
-            // Zoho sin IVA (o IVA ~0): el rate es el total con IVA incluido → base = rate/1.19
-            $zohoHasNoIva = $taxPercentage < 1.0;
-            $applyForcedIva = $forceIva && $zohoHasNoIva && $divisor > 1;
-
-            if ($applyForcedIva) {
+            // Con FORCE_IVA: el rate de Zoho es el precio CON IVA incluido (aunque Zoho
+            // reporte tax_percentage). Se envía base = rate/1.19 + taxes IVA 19%.
+            // Sin esto Siigo suma IVA sobre 78.000 → 92.820 y falla invalid_total_payments.
+            if ($forceIva && $divisor > 1) {
                 $rate = round($rate / $divisor, $decimals);
                 if ($discount > 0) {
                     $discount = round($discount / $divisor, $decimals);
@@ -92,31 +89,26 @@ class SiigoInvoiceService
     }
 
     /**
-     * @param  array<string, mixed>  $line
+     * Total que Siigo calculará: suma((price * qty - discount) * (1 + IVA)).
+     * Usar este valor en payments para evitar invalid_total_payments.
+     *
+     * @param  array<int, array<string, mixed>>  $items
      */
-    private function resolveZohoTaxPercentage(array $line): float
+    public function estimateTotalWithTax(array $items): float
     {
-        if (isset($line['tax_percentage']) && is_numeric($line['tax_percentage'])) {
-            return (float) $line['tax_percentage'];
+        $ivaRate = (float) config('siigo.iva_rate', 0.19);
+        $total = 0.0;
+
+        foreach ($items as $item) {
+            $price = (float) ($item['price'] ?? 0);
+            $qty = (float) ($item['quantity'] ?? 0);
+            $discount = (float) ($item['discount'] ?? 0);
+            $net = ($price * $qty) - $discount;
+            $hasTaxes = ! empty($item['taxes']) && ! ((bool) ($item['vat_excluded'] ?? false));
+            $total += $hasTaxes ? $net * (1 + max(0.0, $ivaRate)) : $net;
         }
 
-        $lineTaxes = $line['line_item_taxes'] ?? $line['taxes'] ?? null;
-        if (! is_array($lineTaxes) || $lineTaxes === []) {
-            return 0.0;
-        }
-
-        $max = 0.0;
-        foreach ($lineTaxes as $tax) {
-            if (! is_array($tax)) {
-                continue;
-            }
-            $pct = $tax['tax_percentage'] ?? $tax['percentage'] ?? null;
-            if (is_numeric($pct)) {
-                $max = max($max, (float) $pct);
-            }
-        }
-
-        return $max;
+        return round($total, 2);
     }
 
     /**

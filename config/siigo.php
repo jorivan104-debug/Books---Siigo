@@ -58,12 +58,14 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | IVA forzado para líneas Zoho sin impuesto
+    | IVA forzado (precios Zoho con IVA incluido)
     |--------------------------------------------------------------------------
     |
-    | Si Zoho trae tax_percentage = 0, el rate se trata como precio CON IVA
-    | incluido: se descompone (÷ 1.19) y se envía a Siigo con IVA 19%.
+    | Con FORCE_IVA (default true): el rate de Zoho se trata siempre como precio
+    | CON IVA incluido → base = rate/1.19 + taxes IVA 19%.
     | Ej: 78.000 → base 65.546,22 + IVA 12.453,78 = 78.000.
+    | El pago usa ese total estimado (no Zoho.total crudo) para evitar
+    | invalid_total_payments (pago 78.000 vs factura 92.820).
     |
     */
 

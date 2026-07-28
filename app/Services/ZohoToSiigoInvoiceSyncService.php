@@ -45,6 +45,7 @@ class ZohoToSiigoInvoiceSyncService
                 'message' => $e->getMessage(),
                 'siigo_invoice_link' => $e->existingLink,
                 'details' => ['reason' => 'already_synced'],
+                'hub_build' => SiigoInvoiceService::HUB_BUILD,
                 'log_id' => $log?->id,
             ];
             $this->logs->skipped($log, $e->getMessage(), $payload);
@@ -55,6 +56,7 @@ class ZohoToSiigoInvoiceSyncService
                 'success' => false,
                 'message' => $e->getMessage(),
                 'details' => ['reason' => 'validation'],
+                'hub_build' => SiigoInvoiceService::HUB_BUILD,
                 'log_id' => $log?->id,
             ];
             $this->logs->failed($log, $e->getMessage(), ['reason' => 'validation'], $payload);
@@ -65,6 +67,7 @@ class ZohoToSiigoInvoiceSyncService
                 'success' => false,
                 'message' => $e->getMessage(),
                 'details' => $e->context(),
+                'hub_build' => SiigoInvoiceService::HUB_BUILD,
                 'log_id' => $log?->id,
             ];
             $this->logs->failed($log, $e->getMessage(), $e->context(), $payload);
@@ -73,8 +76,9 @@ class ZohoToSiigoInvoiceSyncService
         } catch (\Throwable $e) {
             $payload = [
                 'success' => false,
-                'message' => 'Error inesperado durante la sincronización.',
+                'message' => 'Error inesperado durante la sincronización. ['.SiigoInvoiceService::HUB_BUILD.']',
                 'details' => ['exception' => $e->getMessage()],
+                'hub_build' => SiigoInvoiceService::HUB_BUILD,
                 'log_id' => $log?->id,
             ];
             $this->logs->failed($log, $e->getMessage(), ['exception' => $e::class, 'trace' => $e->getMessage()], $payload);
@@ -185,6 +189,7 @@ class ZohoToSiigoInvoiceSyncService
             'message' => 'Factura sincronizada correctamente.',
             'siigo_invoice_id' => $siigoInvoiceId,
             'siigo_invoice_link' => $linkToStore,
+            'hub_build' => \App\Services\SiigoInvoiceService::HUB_BUILD,
             'log_id' => $log?->id,
         ];
 

@@ -9,7 +9,7 @@ use Throwable;
 
 class SiigoInvoiceService
 {
-    public const HUB_BUILD = '20260727-iva5-taxed-price';
+    public const HUB_BUILD = '20260727-iva6-rate-normalize';
 
     public function __construct(private readonly SiigoHttpClient $http)
     {
@@ -34,18 +34,12 @@ class SiigoInvoiceService
         $taxIdIva19 = trim((string) config('siigo.tax_id_iva_19', ''));
         $defaultCode = trim((string) config('siigo.default_product_code', ''));
         $defaultDescription = trim((string) config('siigo.default_product_description', ''));
-        $ivaRate = (float) config('siigo.iva_rate', 0.19);
-        $divisor = 1 + max(0.0, $ivaRate);
+        $ivaRate = $this->resolveIvaRate();
+        $divisor = 1 + $ivaRate;
 
         if ($taxIdIva19 === '' || (int) $taxIdIva19 <= 0) {
             throw new InvalidArgumentException(
                 'SIIGO_TAX_ID_IVA_19 es obligatorio (ID numérico de IVA 19% en Siigo). Sin eso las facturas salen a 0% IVA. Configúralo en Coolify desde /setup → impuestos. ['.self::HUB_BUILD.']'
-            );
-        }
-
-        if ($divisor <= 1) {
-            throw new InvalidArgumentException(
-                'SIIGO_IVA_RATE inválido (debe ser p.ej. 0.19). ['.self::HUB_BUILD.']'
             );
         }
 
@@ -102,8 +96,7 @@ class SiigoInvoiceService
      */
     public function estimateTotalWithTax(array $items): float
     {
-        $ivaRate = (float) config('siigo.iva_rate', 0.19);
-        $pct = max(0.0, $ivaRate) * 100;
+        $pct = $this->resolveIvaRate() * 100;
         $total = 0.0;
 
         foreach ($items as $item) {
@@ -265,6 +258,29 @@ class SiigoInvoiceService
         }
 
         return (float) $m[1];
+    }
+
+    /**
+     * Normaliza SIIGO_IVA_RATE: acepta 0.19, 19, "19%" o "0,19". Default 0.19.
+     */
+    private function resolveIvaRate(): float
+    {
+        $raw = config('siigo.iva_rate', 0.19);
+        if (is_string($raw)) {
+            $raw = str_replace(['%', ' '], '', str_replace(',', '.', trim($raw)));
+        }
+        $rate = is_numeric($raw) ? (float) $raw : 0.19;
+
+        // Si pusieron 19 en vez de 0.19, convertir a fracción.
+        if ($rate > 1) {
+            $rate = $rate / 100;
+        }
+
+        if ($rate <= 0 || $rate >= 1) {
+            return 0.19;
+        }
+
+        return $rate;
     }
 
     /**

@@ -74,7 +74,7 @@ return [
         ['0', 'false', 'no', 'off'],
         true
     ),
-    'iva_rate' => (float) env('SIIGO_IVA_RATE', 0.19),
+    'iva_rate' => env('SIIGO_IVA_RATE', '0.19'),
     'price_decimals' => (int) env('SIIGO_PRICE_DECIMALS', 2),
 
     /*

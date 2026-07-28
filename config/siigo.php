@@ -69,7 +69,7 @@ return [
 
     'force_iva_on_untaxed' => ! in_array(
         strtolower((string) env('SIIGO_FORCE_IVA_ON_UNTAXED', 'true')),
-        ['0', 'false', 'no', 'off', ''],
+        ['0', 'false', 'no', 'off'],
         true
     ),
     'iva_rate' => (float) env('SIIGO_IVA_RATE', 0.19),

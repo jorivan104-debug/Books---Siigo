@@ -154,7 +154,7 @@ class ZohoToSiigoInvoiceSyncService
             seller: (int) config('siigo.seller_id'),
             items: $items,
             payments: $payments,
-            observations: $this->buildObservations($invoice, $siigoDate),
+            observations: null,
             sendToDian: (bool) config('siigo.invoice.send_to_dian', false),
             sendMail: (bool) config('siigo.invoice.send_mail', false),
         );
@@ -248,26 +248,6 @@ class ZohoToSiigoInvoiceSyncService
         } catch (\Throwable) {
             return $siigoDate;
         }
-    }
-
-    private function buildObservations(array $invoice, string $siigoDate): string
-    {
-        $number = $invoice['invoice_number'] ?? $invoice['number'] ?? null;
-        $id = $invoice['invoice_id'] ?? null;
-        $zohoDate = $invoice['date'] ?? null;
-        $parts = ['Sincronizada desde Zoho Books'];
-
-        if ($number !== null) {
-            $parts[] = 'Número: '.$number;
-        }
-        if ($id !== null) {
-            $parts[] = 'ID Zoho: '.$id;
-        }
-        if (is_string($zohoDate) && $zohoDate !== '' && $zohoDate !== $siigoDate) {
-            $parts[] = 'Fecha Zoho: '.$zohoDate;
-        }
-
-        return implode(' | ', $parts);
     }
 
     private function extractSiigoLink(array $response): ?string

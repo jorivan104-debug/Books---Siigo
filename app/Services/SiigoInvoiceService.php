@@ -9,7 +9,7 @@ use Throwable;
 
 class SiigoInvoiceService
 {
-    public const HUB_BUILD = '20260727-iva6-rate-normalize';
+    public const HUB_BUILD = '20260730-entity-discounts';
 
     public function __construct(private readonly SiigoHttpClient $http)
     {
@@ -28,7 +28,19 @@ class SiigoInvoiceService
      * @param  array<int, array<string, mixed>>  $lineItems
      * @return array<int, array<string, mixed>>
      */
-    public function buildItemsFromZohoLineItems(array $lineItems): array
+    public function buildItemsFromZohoInvoice(array $invoice): array
+    {
+        $lineItems = (array) ($invoice['line_items'] ?? []);
+        $entityDiscount = $this->resolveEntityLevelDiscount($invoice, $lineItems);
+
+        return $this->buildItemsFromZohoLineItems($lineItems, $entityDiscount);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $lineItems
+     * @return array<int, array<string, mixed>>
+     */
+    public function buildItemsFromZohoLineItems(array $lineItems, float $entityDiscountGross = 0.0): array
     {
         $productMap = (array) config('siigo_product_map', []);
         $taxIdIva19 = trim((string) config('siigo.tax_id_iva_19', ''));
@@ -45,8 +57,9 @@ class SiigoInvoiceService
 
         $taxId = (int) $taxIdIva19;
         $items = [];
+        $entityDiscounts = $this->allocateEntityDiscount($lineItems, $entityDiscountGross);
 
-        foreach ($lineItems as $line) {
+        foreach ($lineItems as $index => $line) {
             $sku = (string) ($line['sku'] ?? $line['item_id'] ?? '');
             $code = $defaultCode !== '' ? $defaultCode : ($productMap[$sku] ?? $sku);
 
@@ -56,7 +69,10 @@ class SiigoInvoiceService
 
             $quantity = (float) ($line['quantity'] ?? 0);
             $gross = round((float) ($line['rate'] ?? 0), 2);
-            $discountGross = round((float) ($line['discount_amount'] ?? 0), 2);
+            $discountGross = round(
+                (float) ($line['discount_amount'] ?? 0) + ($entityDiscounts[$index] ?? 0),
+                2
+            );
 
             // Base neta con hasta 6 decimales (límite Siigo) para que base+IVA = gross.
             $net = round($gross / $divisor, 6);
@@ -67,8 +83,6 @@ class SiigoInvoiceService
                 'description' => $description !== '' ? $description : $code,
                 'quantity' => $quantity,
                 'price' => $net,
-                // Siigo: si se envía, reemplaza price y el total de línea queda con IVA incluido.
-                'taxed_price' => $gross,
                 'vat_excluded' => false,
                 'taxes' => [
                     ['id' => $taxId],
@@ -77,12 +91,98 @@ class SiigoInvoiceService
 
             if ($discountNet > 0) {
                 $item['discount'] = round($discountNet, 2);
+            } else {
+                // Siigo: taxed_price reemplaza price y conserva exactamente el total con IVA.
+                // No se usa en líneas con descuento para que este reduzca la base gravable.
+                $item['taxed_price'] = $gross;
             }
 
             $items[] = $item;
         }
 
         return $items;
+    }
+
+    /**
+     * Obtiene el descuento global aplicado al subtotal en Zoho.
+     *
+     * @param  array<string, mixed>  $invoice
+     * @param  array<int, array<string, mixed>>  $lineItems
+     */
+    private function resolveEntityLevelDiscount(array $invoice, array $lineItems): float
+    {
+        $type = strtolower(trim((string) ($invoice['discount_type'] ?? '')));
+        if ($type !== 'entity_level') {
+            return 0.0;
+        }
+
+        if (isset($invoice['discount_total']) && is_numeric($invoice['discount_total'])) {
+            return max(0.0, round((float) $invoice['discount_total'], 2));
+        }
+
+        $raw = trim((string) ($invoice['discount'] ?? '0'));
+        if ($raw === '') {
+            return 0.0;
+        }
+
+        if (str_ends_with($raw, '%')) {
+            $percentage = (float) rtrim($raw, "% \t\n\r\0\x0B");
+            $base = (float) ($invoice['discount_applied_on_amount'] ?? 0);
+            if ($base <= 0) {
+                $base = array_reduce(
+                    $lineItems,
+                    fn (float $sum, array $line): float => $sum
+                        + ((float) ($line['rate'] ?? 0) * (float) ($line['quantity'] ?? 0)),
+                    0.0
+                );
+            }
+
+            return max(0.0, round($base * ($percentage / 100), 2));
+        }
+
+        return is_numeric($raw) ? max(0.0, round((float) $raw, 2)) : 0.0;
+    }
+
+    /**
+     * Distribuye el descuento global proporcionalmente entre los productos.
+     *
+     * @param  array<int, array<string, mixed>>  $lineItems
+     * @return array<int, float>
+     */
+    private function allocateEntityDiscount(array $lineItems, float $discount): array
+    {
+        $discount = max(0.0, round($discount, 2));
+        if ($discount <= 0 || $lineItems === []) {
+            return [];
+        }
+
+        $weights = [];
+        foreach ($lineItems as $index => $line) {
+            $lineGross = (float) ($line['rate'] ?? 0) * (float) ($line['quantity'] ?? 0);
+            $lineDiscount = (float) ($line['discount_amount'] ?? 0);
+            $weights[$index] = max(0.0, $lineGross - $lineDiscount);
+        }
+
+        $subtotal = array_sum($weights);
+        if ($subtotal <= 0) {
+            return [];
+        }
+
+        $discount = min($discount, round($subtotal, 2));
+        $eligible = array_keys(array_filter($weights, fn (float $weight): bool => $weight > 0));
+        $last = end($eligible);
+        $remaining = $discount;
+        $allocated = [];
+
+        foreach ($eligible as $index) {
+            $value = $index === $last
+                ? $remaining
+                : round($discount * ($weights[$index] / $subtotal), 2);
+            $allocated[$index] = max(0.0, $value);
+            $remaining = round($remaining - $value, 2);
+        }
+
+        return $allocated;
     }
 
     /**

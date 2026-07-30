@@ -131,9 +131,7 @@ class ZohoToSiigoInvoiceSyncService
             );
         }
 
-        $items = $this->siigoInvoices->buildItemsFromZohoLineItems(
-            (array) ($invoice['line_items'] ?? [])
-        );
+        $items = $this->siigoInvoices->buildItemsFromZohoInvoice($invoice);
         if (empty($items)) {
             throw new InvalidArgumentException('La factura de Zoho no tiene ítems para sincronizar.');
         }

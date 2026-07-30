@@ -9,7 +9,7 @@ use Throwable;
 
 class SiigoInvoiceService
 {
-    public const HUB_BUILD = '20260730-entity-discounts';
+    public const HUB_BUILD = '20260730-discount-as-final-price';
 
     public function __construct(private readonly SiigoHttpClient $http)
     {
@@ -18,12 +18,13 @@ class SiigoInvoiceService
     /**
      * Construye el array de items para Siigo a partir de los line_items de Zoho.
      *
-     * El rate de Zoho se trata como precio CON IVA incluido:
-     *   - taxed_price = rate (Siigo lo usa como total con IVA; reemplaza price)
-     *   - price       = rate / 1.19 (base neta, hasta 6 decimales)
+     * El valor final de Zoho (tarifa menos descuento) se trata como precio CON IVA:
+     *   - taxed_price = valor final unitario
+     *   - price       = valor final unitario / 1.19 (base neta)
      *   - taxes       = IVA 19% (SIIGO_TAX_ID_IVA_19)
      *
-     * Ej: 78.000 → total factura 78.000 con desglose IVA (no 92.820).
+     * No se envía items.discount: algunos comprobantes Siigo lo interpretan como
+     * porcentaje. Ej: 124.900 - 56.900 = 68.000 → base 57.143 + IVA 10.857.
      *
      * @param  array<int, array<string, mixed>>  $lineItems
      * @return array<int, array<string, mixed>>
@@ -68,34 +69,36 @@ class SiigoInvoiceService
                 : (string) ($line['name'] ?? $line['description'] ?? $defaultCode);
 
             $quantity = (float) ($line['quantity'] ?? 0);
-            $gross = round((float) ($line['rate'] ?? 0), 2);
-            $discountGross = round(
-                (float) ($line['discount_amount'] ?? 0) + ($entityDiscounts[$index] ?? 0),
-                2
-            );
+            if ($quantity <= 0) {
+                throw new InvalidArgumentException('La cantidad del producto debe ser mayor que cero. ['.self::HUB_BUILD.']');
+            }
 
-            // Base neta con hasta 6 decimales (límite Siigo) para que base+IVA = gross.
-            $net = round($gross / $divisor, 6);
-            $discountNet = $discountGross > 0 ? round($discountGross / $divisor, 6) : 0.0;
+            $rate = (float) ($line['rate'] ?? 0);
+            $lineDiscount = (float) ($line['discount_amount'] ?? 0);
+
+            // item_total ya representa tarifa × cantidad menos descuento de línea.
+            // Si Zoho no lo trae, se calcula con rate y discount_amount.
+            $lineFinalGross = isset($line['item_total']) && is_numeric($line['item_total'])
+                ? (float) $line['item_total']
+                : ($rate * $quantity) - $lineDiscount;
+
+            // Un descuento global se distribuye entre las líneas y también se incorpora
+            // al precio final, nunca se envía en items.discount.
+            $lineFinalGross = max(0.0, $lineFinalGross - ($entityDiscounts[$index] ?? 0));
+            $unitGross = round($lineFinalGross / $quantity, 6);
+            $unitNet = round($unitGross / $divisor, 6);
 
             $item = [
                 'code' => $code,
                 'description' => $description !== '' ? $description : $code,
                 'quantity' => $quantity,
-                'price' => $net,
+                'price' => $unitNet,
+                'taxed_price' => $unitGross,
                 'vat_excluded' => false,
                 'taxes' => [
                     ['id' => $taxId],
                 ],
             ];
-
-            if ($discountNet > 0) {
-                $item['discount'] = round($discountNet, 2);
-            } else {
-                // Siigo: taxed_price reemplaza price y conserva exactamente el total con IVA.
-                // No se usa en líneas con descuento para que este reduzca la base gravable.
-                $item['taxed_price'] = $gross;
-            }
 
             $items[] = $item;
         }
@@ -158,9 +161,11 @@ class SiigoInvoiceService
 
         $weights = [];
         foreach ($lineItems as $index => $line) {
-            $lineGross = (float) ($line['rate'] ?? 0) * (float) ($line['quantity'] ?? 0);
-            $lineDiscount = (float) ($line['discount_amount'] ?? 0);
-            $weights[$index] = max(0.0, $lineGross - $lineDiscount);
+            $lineGross = isset($line['item_total']) && is_numeric($line['item_total'])
+                ? (float) $line['item_total']
+                : ((float) ($line['rate'] ?? 0) * (float) ($line['quantity'] ?? 0))
+                    - (float) ($line['discount_amount'] ?? 0);
+            $weights[$index] = max(0.0, $lineGross);
         }
 
         $subtotal = array_sum($weights);

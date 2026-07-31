@@ -9,7 +9,7 @@ use Throwable;
 
 class SiigoInvoiceService
 {
-    public const HUB_BUILD = '20260730-discount-as-final-price';
+    public const HUB_BUILD = '20260731-normalize-identification';
 
     public function __construct(private readonly SiigoHttpClient $http)
     {

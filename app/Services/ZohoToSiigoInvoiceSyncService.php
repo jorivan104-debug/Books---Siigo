@@ -107,11 +107,18 @@ class ZohoToSiigoInvoiceSyncService
         $numeroIdentApi = (string) config('zoho.custom_fields.contact.numero_identificacion');
 
         $tipoIdentValue = ZohoCustomFieldHelper::getValue($contact, $tipoIdentApi);
-        $numeroIdent = ZohoCustomFieldHelper::getValue($contact, $numeroIdentApi);
+        $numeroIdentRaw = ZohoCustomFieldHelper::getValue($contact, $numeroIdentApi);
 
-        if ($numeroIdent === null) {
+        if ($numeroIdentRaw === null) {
             throw new InvalidArgumentException(
                 "El contacto en Zoho no tiene número de identificación (campo {$numeroIdentApi})."
+            );
+        }
+
+        $numeroIdent = $this->siigoCustomers->normalizeIdentification($numeroIdentRaw);
+        if ($numeroIdent === '') {
+            throw new InvalidArgumentException(
+                "El número de identificación del contacto es inválido (valor: {$numeroIdentRaw})."
             );
         }
 

@@ -18,6 +18,8 @@ class SiigoCustomerService
      */
     public function findByIdentification(string $identification): ?array
     {
+        $identification = $this->normalizeIdentification($identification);
+
         $response = $this->safeRequest(
             fn () => $this->http->get('v1/customers', ['identification' => $identification]),
             "No se pudo consultar el cliente {$identification} en Siigo.",
@@ -34,6 +36,17 @@ class SiigoCustomerService
     }
 
     /**
+     * Quita puntos, guiones, espacios y demás no-dígitos del NIT/CC.
+     * Ej: "1.065.871.455-6" → "10658714556"
+     */
+    public function normalizeIdentification(string $identification): string
+    {
+        $digits = preg_replace('/\D+/', '', $identification);
+
+        return is_string($digits) ? $digits : '';
+    }
+
+    /**
      * Construye un objeto customer completo (para crear inline desde POST /v1/invoices)
      * usando los datos del contacto Zoho y los defaults geográficos del config.
      */
@@ -42,6 +55,7 @@ class SiigoCustomerService
         string $identification,
         string $idType
     ): array {
+        $identification = $this->normalizeIdentification($identification);
         $personType = $this->resolvePersonType($zohoContact, $idType);
         $names = $this->resolveName($zohoContact, $personType);
         $defaults = (array) config('siigo.customer_defaults');

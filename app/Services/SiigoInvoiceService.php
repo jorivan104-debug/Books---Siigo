@@ -9,7 +9,7 @@ use Throwable;
 
 class SiigoInvoiceService
 {
-    public const HUB_BUILD = '20260731-normalize-identification';
+    public const HUB_BUILD = '20260731-gift-zero-price';
 
     public function __construct(private readonly SiigoHttpClient $http)
     {
@@ -22,6 +22,9 @@ class SiigoInvoiceService
      *   - taxed_price = valor final unitario
      *   - price       = valor final unitario / 1.19 (base neta)
      *   - taxes       = IVA 19% (SIIGO_TAX_ID_IVA_19)
+     *
+     * Obsequios (valor final 0): Siigo exige price=0 + tax_base + taxpayer
+     * (Customer|Company). No se envía taxed_price en esos casos.
      *
      * No se envía items.discount: algunos comprobantes Siigo lo interpretan como
      * porcentaje. Ej: 124.900 - 56.900 = 68.000 → base 57.143 + IVA 10.857.
@@ -86,9 +89,24 @@ class SiigoInvoiceService
             // al precio final, nunca se envía en items.discount.
             $lineFinalGross = max(0.0, $lineFinalGross - ($entityDiscounts[$index] ?? 0));
             $unitGross = round($lineFinalGross / $quantity, 6);
+
+            // Obsequio / valor 0: Siigo exige price=0, tax_base (>0) y taxpayer.
+            if ($unitGross <= 0) {
+                $items[] = $this->buildGiftItem(
+                    $code,
+                    $description !== '' ? $description : $code,
+                    $quantity,
+                    $rate,
+                    $lineDiscount,
+                    $taxId,
+                    $divisor,
+                );
+                continue;
+            }
+
             $unitNet = round($unitGross / $divisor, 6);
 
-            $item = [
+            $items[] = [
                 'code' => $code,
                 'description' => $description !== '' ? $description : $code,
                 'quantity' => $quantity,
@@ -99,11 +117,81 @@ class SiigoInvoiceService
                     ['id' => $taxId],
                 ],
             ];
-
-            $items[] = $item;
         }
 
         return $items;
+    }
+
+    /**
+     * Ítem de obsequio (price 0) según reglas Siigo.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildGiftItem(
+        string $code,
+        string $description,
+        float $quantity,
+        float $rate,
+        float $lineDiscount,
+        int $taxId,
+        float $divisor,
+    ): array {
+        $taxpayer = $this->resolveGiftTaxpayer();
+
+        // Valor comercial con IVA: tarifa original, o el descuento si fue 100% off.
+        $commercialGross = max(0.0, round($rate, 2));
+        if ($commercialGross <= 0) {
+            $commercialGross = max(0.0, round($lineDiscount, 2));
+        }
+
+        if ($commercialGross <= 0) {
+            $configured = (float) config('siigo.gift_tax_base', 0);
+            if ($configured > 0) {
+                return [
+                    'code' => $code,
+                    'description' => $description,
+                    'quantity' => $quantity,
+                    'price' => 0,
+                    'tax_base' => round($configured, 2),
+                    'taxpayer' => $taxpayer,
+                    'vat_excluded' => false,
+                    'taxes' => [
+                        ['id' => $taxId],
+                    ],
+                ];
+            }
+
+            throw new InvalidArgumentException(
+                'Hay un obsequio (valor 0) sin tarifa/valor comercial en Zoho. Indica la tarifa del producto (aunque el total sea 0) o define SIIGO_GIFT_TAX_BASE. ['.self::HUB_BUILD.']'
+            );
+        }
+
+        $taxBase = round($commercialGross / $divisor, 2);
+        if ($taxBase <= 0) {
+            $taxBase = 0.01;
+        }
+
+        return [
+            'code' => $code,
+            'description' => $description,
+            'quantity' => $quantity,
+            'price' => 0,
+            'tax_base' => $taxBase,
+            'taxpayer' => $taxpayer,
+            'vat_excluded' => false,
+            'taxes' => [
+                ['id' => $taxId],
+            ],
+        ];
+    }
+
+    private function resolveGiftTaxpayer(): string
+    {
+        $raw = strtolower(trim((string) config('siigo.gift_taxpayer', 'Company')));
+
+        return in_array($raw, ['customer', 'company'], true)
+            ? ucfirst($raw)
+            : 'Company';
     }
 
     /**
@@ -207,6 +295,18 @@ class SiigoInvoiceService
         foreach ($items as $item) {
             $qty = (float) ($item['quantity'] ?? 0);
             $discount = (float) ($item['discount'] ?? 0);
+            $price = (float) ($item['price'] ?? 0);
+
+            // Obsequio: si Company asume el IVA, no suma al pago del cliente.
+            // Si Customer asume, paga solo el IVA sobre tax_base.
+            if ($price <= 0 && isset($item['tax_base'])) {
+                $taxpayer = strtolower((string) ($item['taxpayer'] ?? 'company'));
+                if ($taxpayer === 'customer') {
+                    $taxBase = round($qty * (float) $item['tax_base'], 2);
+                    $total += round(($taxBase * $pct) / 100, 2);
+                }
+                continue;
+            }
 
             // Si hay taxed_price sin descuento, el total de línea es qty * taxed_price.
             if (
@@ -219,7 +319,6 @@ class SiigoInvoiceService
             }
 
             // Fórmula oficial Siigo sobre price neto.
-            $price = (float) ($item['price'] ?? 0);
             $base = round(($qty * $price) - $discount, 2);
             $hasTaxes = ! empty($item['taxes']) && ! ((bool) ($item['vat_excluded'] ?? false));
             if ($hasTaxes && $pct > 0) {

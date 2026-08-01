@@ -61,6 +61,35 @@ class SiigoInvoiceDiscountTest extends TestCase
         $this->assertSame(68000.0, $service->estimateTotalWithTax($items));
     }
 
+    public function test_maps_zero_value_gift_with_taxpayer_and_tax_base(): void
+    {
+        config()->set('siigo.tax_id_iva_19', 123);
+        config()->set('siigo.default_product_code', '41');
+        config()->set('siigo.iva_rate', '0.19');
+        config()->set('siigo.gift_taxpayer', 'Company');
+
+        $service = app(SiigoInvoiceService::class);
+        $items = $service->buildItemsFromZohoInvoice([
+            'discount_type' => 'item_level',
+            'line_items' => [
+                [
+                    'sku' => 'GIFT-1',
+                    'name' => 'Obsequio',
+                    'quantity' => 1,
+                    'rate' => 11900,
+                    'discount_amount' => 11900,
+                    'item_total' => 0,
+                ],
+            ],
+        ]);
+
+        $this->assertSame(0, $items[0]['price']);
+        $this->assertSame(10000.0, $items[0]['tax_base']);
+        $this->assertSame('Company', $items[0]['taxpayer']);
+        $this->assertArrayNotHasKey('taxed_price', $items[0]);
+        $this->assertSame(0.0, $service->estimateTotalWithTax($items));
+    }
+
     public function test_keeps_taxed_price_when_invoice_has_no_discount(): void
     {
         config()->set('siigo.tax_id_iva_19', 123);

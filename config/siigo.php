@@ -79,6 +79,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Obsequios (ítems con valor 0)
+    |--------------------------------------------------------------------------
+    |
+    | Siigo exige tax_base + taxpayer cuando price = 0.
+    | gift_taxpayer: Company (la empresa asume el IVA) o Customer.
+    | gift_tax_base: base neta de respaldo si Zoho no trae tarifa comercial.
+    |
+    */
+
+    'gift_taxpayer' => env('SIIGO_GIFT_TAXPAYER', 'Company'),
+    'gift_tax_base' => (float) env('SIIGO_GIFT_TAX_BASE', 0),
+
+    /*
+    |--------------------------------------------------------------------------
     | Defaults para creación de cliente desde la factura
     |--------------------------------------------------------------------------
     |
